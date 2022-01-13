@@ -3,8 +3,13 @@ const helper = require("./helpers");
 const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A";
 const axios = require("axios");
 const mongoose = require("mongoose");
+const constants = require("./constants")
+const playersHelpers = require('./helpers/players');
 const MONGODB_URI =
   "mongodb+srv://oslan228:papech364@telegram.nnwcf.mongodb.net/telegram?retryWrites=true&w=majority";
+require("./models/player.model");
+require("./models/result.model");
+require("./models/status.model");
 const bot = new TelegramBot(token, {
   polling: {
     interval: 300,
@@ -20,59 +25,51 @@ mongoose
   .catch((err) => console.log(`error is: ${err}`));
 helper.logStart();
 
-require("./models/player.model");
 const Player = mongoose.model("players");
 const Status = mongoose.model("status");
+const Result = mongoose.model("results");
 
+const LICHESS_API = constants.LICHESS_API;
 // ================
 
-async function checkUniquePlayer(chatId, query) {
-  Player.find(query).then((player) => {
-    console.log(player);
-    if (player.length > 0) {
-      bot.sendMessage(chatId, `user ${query.name} is already registred`);
-    } else {
-      axios
-        .get(`https://lichess.org/api/user/${query.name}`)
-        .then(function (response) {
-          new Player({
-            name: query.name,
-            group: "",
-            score: 0,
-          })
-            .save()
-            .catch((e) => {
-              console.log(e);
-              bot.sendMessage(chatId, `Error`);
-            });
-          bot.sendMessage(
-            chatId,
-            `Player ${query.name} is Succesfully regisred`
-          );
-          console.log(response);
-        })
-        .catch(function (error) {
-          bot.sendMessage(chatId, `Incorrect username`);
-          console.log(error);
+async function registerPlayer(chatId, query) {
+  axios
+    .get(`${LICHESS_API}/${query.name}`)
+    .then(function (response) {
+      new Player({
+        name: query.name.toLowerCase(),
+      })
+        .save()
+        .then((response) =>
+          bot.sendMessage(chatId, `user ${query.name} is succesfully registred`)
+        )
+        .catch((e) => {
+          console.log(e);
+          bot.sendMessage(chatId, `User is already exist`);
         });
-    }
-  });
+    })
+    .catch(function (error) {
+      bot.sendMessage(chatId, `Incorrect username`);
+      console.log(error);
+    });
 }
 bot.onText(/\/register (.+)/, (msg, [source, match]) => {
   const { id } = msg.chat;
   const name = match.match(/[^\/]+$/)[0];
-  checkUniquePlayer(id, { name });
+  registerPlayer(id, { name });
 });
-function sendPlayers(chatId, query) {
+
+async function sendPlayers(chatId, query) {
   Player.find(query).then((players) => {
     const res = players
       .map((player, index) => {
         return `${index + 1} ${player.name}`;
       })
       .join("\n");
-    bot.sendMessage(chatId, res);
+    bot.sendMessage(chatId, res)
   });
 }
+
 bot.onText(/\/players/, (msg, [source, match]) => {
   const { id } = msg.chat;
   sendPlayers(id, {});
@@ -121,6 +118,18 @@ function shuffle(array) {
   return array;
 }
 
+function addOpponents(players, groupIds) {
+  console.log(players, 'players');
+  console.log(groupIds, 'groupIds')
+  const opponents = players.reduce((accum, item) => {  
+   if(groupIds.includes(item._id)) {
+     accum.push(item.name)
+   }
+    return accum
+  }, [])
+  console.log(opponents, 'opponents');
+  return opponents
+}
 async function addGroups() {
   const array = await Player.find({});
   const shuffeled = shuffle(array);
@@ -136,9 +145,31 @@ async function addGroups() {
   console.log(idsA, "a");
   console.log(idsB, "b");
 
-  await Player.updateMany({ _id: { $in: idsA } }, { $set: { group: "A" } });
-  await Player.updateMany({ _id: { $in: idsB } }, { $set: { group: "B" } });
+  await Player.updateMany({ _id: { $in: idsA } }, 
+  { 
+    $set: { 
+    group: "A",
+    opponents: addOpponents(shuffeled, idsA) 
+    },
+  } 
+  );
+  await Player.updateMany(
+    { 
+    _id: { $in: idsB } },
+    { 
+    $set: {
+    group: "B", 
+    opponents: addOpponents(shuffeled, idsB) 
+    } 
+    }
+    );
 }
+
+function sendGroup(chatId, group) {
+  bot.sendMessage(chatId, `Group ${group}`)
+   sendPlayers(chatId, { group })
+}
+
 async function startTournament(chatId) {
   const status = await Status.findOne();
   if (status.started === true) {
@@ -147,12 +178,19 @@ async function startTournament(chatId) {
     status.started = true;
     await status
       .save()
-      .then(addGroups())
-      .then(bot.sendMessage(chatId, `tournament has been succesfully started`))
-      .then(bot.sendMessage(chatId, "Group A"))
-      .then(await sendPlayers(chatId, { group: "A" }))
-      .then(bot.sendMessage(chatId, "Group B"))
-      .then(await sendPlayers(chatId, { group: "B" }));
+      .then(await addGroups())
+      .then (
+        bot.sendMessage(chatId, `tournament has been succesfully started`)
+        )
+      .then(setTimeout(() => {
+        sendGroup(chatId, 'A')
+      }, 1000) )
+      .then(setTimeout(() => {
+        sendGroup(chatId, 'B')
+      }, 2000) )
+      // .then( sendPlayers(chatId, { group: "A" }))
+      // .then(bot.sendMessage(chatId, "Group B"))
+      // .then(sendPlayers(chatId, { group: "B" }))
   }
 }
 bot.onText(/\/start/, (msg) => {
@@ -178,10 +216,13 @@ async function addResult(id, string) {
     throw new Error("Incorrect score");
   }
   await Player.updateOne({ name: player1 }, { $inc: { score: score1 } });
-  await Player.updateOne(
-    { name: player2 }, //
-    { $inc: { score: score2 } }
-  );
+  await Player.updateOne({ name: player2 }, { $inc: { score: score2 } });
+  new Result({
+    player1,
+    score1,
+    player2,
+    score2,
+  });
   bot.sendMessage(id, `result ${string} is sucesfully added`);
 }
 bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
@@ -190,3 +231,7 @@ bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
 });
 
 bot.on("polling_error", console.log);
+
+module.exports = {
+  bot
+}

@@ -6,41 +6,23 @@ const PlayerSchema = new Schema({
   name: {
     type: String,
     required: true,
+    unique: true,
   },
   group: {
     type: String,
+    default: "",
   },
   score: {
     type: Number,
+    default: 0,
   },
+  opponents: {
+    type: [],
+    default: [],
+  }
 });
-const Status = new Schema({
-  started: {
-    type: Boolean,
-    required: true,
-  },
-});
-const Results = new Schema({
-  player1: {
-    type: String,
-    required: true,
-  },
-  score1: {
-    type: Number,
-    required: true,
-  },
-  player2: {
-    type: String,
-    required: true,
-  },
-  score2: {
-    type: Number,
-    required: true,
-  },
-});
+
 
 mongoose.model("players", PlayerSchema);
 
-mongoose.model("status", Status);
 
-mongoose.model("results", Results);
