@@ -23,6 +23,6 @@ const PlayerSchema = new Schema({
 });
 
 
-mongoose.model("players", PlayerSchema);
+export default mongoose.model("players", PlayerSchema);
 
 

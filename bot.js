@@ -1,15 +1,19 @@
 const TelegramBot = require("node-telegram-bot-api");
 const helper = require("./helpers");
-const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A";
 const axios = require("axios");
 const mongoose = require("mongoose");
-const constants = require("./constants");
-const playersHelpers = require("./helpers/players");
-const MONGODB_URI =
-  "mongodb+srv://oslan228:papech364@telegram.nnwcf.mongodb.net/telegram?retryWrites=true&w=majority";
+const { LICHESS_API } = require("./constants");
+const Tournament, { TOURNAMENT_STATUS } = require('./models/tournament.model');
+const Player = require('./models/player.model');
+const Result = require('./models/result.model');
 require("./models/player.model");
 require("./models/result.model");
-require("./models/status.model");
+require("./models/tournament.model");
+
+const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A";
+const MONGODB_URI =
+  "mongodb+srv://oslan228:papech364@telegram.nnwcf.mongodb.net/telegram?retryWrites=true&w=majority";
+
 const bot = new TelegramBot(token, {
   polling: {
     interval: 300,
@@ -24,17 +28,12 @@ mongoose
   .then(() => console.log("connected"))
   .catch((err) => console.log(`error is: ${err}`));
 
-const Player = mongoose.model("players");
-const Status = mongoose.model("status");
-const Result = mongoose.model("results");
 
-const LICHESS_API = constants.LICHESS_API;
-// ================
 
 async function registerPlayer(chatId, query) {
-  const tournamentStatus = await Status.find({});
-  const status = tournamentStatus.tournamentStatus;
-  if (status !== "registration") {
+  const tournament = await Tournament.find({});
+
+  if (tournament.status !== TOURNAMENT_STATUS.REGISTRATION) {
     bot.sendMessage(chatId, `Sorry tournament is already started`);
   } else {
     axios
@@ -124,12 +123,12 @@ function sendGroup(chatId, group) {
 }
 
 async function startTournament(chatId) {
-  const status = await Status.findOne();
-  if (status.tournamentStatus !== "registration") {
+  const tournament = await Tournament.findOne();
+  if (tournament.status !== TOURNAMENT_STATUS.REGISTRATION) {
     bot.sendMessage(chatId, `tournament is already started`);
   } else {
-    status.tournamentStatus = "groups";
-    await status
+    tournament.TOURNAMENT_STATUS = TOURNAMENT_STATUS.GROUPS;
+    await tournament
       .save()
       .then(await addGroups())
       .then(bot.sendMessage(chatId, `tournament has been successfully started`))
@@ -143,9 +142,6 @@ async function startTournament(chatId) {
           sendGroup(chatId, "B");
         }, 2000)
       );
-    // .then( sendPlayers(chatId, { group: "A" }))
-    // .then(bot.sendMessage(chatId, "Group B"))
-    // .then(sendPlayers(chatId, { group: "B" }))
   }
 }
 bot.onText(/\/start/, (msg) => {
@@ -165,6 +161,7 @@ async function addResult(id, string) {
     bot.sendMessage(id, "incorrect score entry");
     throw new Error("Incorrect score");
   }
+  
   const player1Data = await Player.findOne({ name: player1 });
   const player2Data = await Player.findOne({ name: player2 });
 

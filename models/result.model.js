@@ -1,5 +1,7 @@
 const mongoose = require("mongoose");
+const { TOURNAMENT_STATUS } = require("./status.model");
 require("./player.model");
+
 const Schema = mongoose.Schema;
 
 const Player = mongoose.model("players");
@@ -25,11 +27,11 @@ const ResultsSchema = new Schema({
   },
   stage: {
     type: String,
-    default: "groupStage",
+    default: TOURNAMENT_STATUS.GROUPS,
   },
   link: {
     type: String,
   },
 });
 
-mongoose.model("results", ResultsSchema);
+export default mongoose.model("results", ResultsSchema);
