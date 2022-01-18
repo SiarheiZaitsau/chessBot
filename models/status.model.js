@@ -2,11 +2,13 @@ const mongoose = require("mongoose");
 
 const Schema = mongoose.Schema;
 
-const Status = new Schema({
-  started: {
-    type: Boolean,
+const StatusSchema = new Schema({
+  tournamentStatus: {
+    type: String,
     required: true,
+    default: "registration",
+    enum: ["registration", "groupstage", "playoff"],
   },
 });
 
-mongoose.model("status", Status);
+mongoose.model("status", StatusSchema);
