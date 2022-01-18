@@ -1,14 +1,14 @@
 const mongoose = require("mongoose");
-require("./player.model")
+require("./player.model");
 const Schema = mongoose.Schema;
 
 const Player = mongoose.model("players");
 
 const ResultsSchema = new Schema({
   player1: {
-    type: Schema.Types.ObjectId, 
+    type: Schema.Types.ObjectId,
     required: true,
-    ref: Player
+    ref: Player,
   },
   score1: {
     type: Number,
@@ -17,7 +17,7 @@ const ResultsSchema = new Schema({
   player2: {
     type: Schema.Types.ObjectId,
     required: true,
-    ref: Player
+    ref: Player,
   },
   score2: {
     type: Number,
@@ -25,8 +25,11 @@ const ResultsSchema = new Schema({
   },
   stage: {
     type: String,
-    default: 'groupStage'
-  }
+    default: "groupStage",
+  },
+  link: {
+    type: String,
+  },
 });
 
 mongoose.model("results", ResultsSchema);

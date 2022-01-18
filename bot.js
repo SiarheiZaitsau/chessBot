@@ -212,15 +212,11 @@ async function addResult(id, string) {
   const splitted = string.split(" ");
   const player1 = splitted[0].toLowerCase();
   const splittedScore = splitted[1].split(":");
-  console.log(splittedScore, "splittedScore");
+  console.log(splitted, "splitted");
   const score1 = parseFloat(splittedScore[0].replace(",", "."));
   const score2 = parseFloat(splittedScore[1].replace(",", "."));
+  const link = splitted[3] || undefined;
   const player2 = splitted[2].toLowerCase();
-  console.log(player1, "player1");
-  console.log(score1, "score1");
-  console.log(player2, "player2");
-  console.log(score2, "score2");
-  console.log(score1 + score2, "sum");
   if ((score1 + score2) % 1 > 0) {
     bot.sendMessage(id, "incorrect score entry");
     throw new Error("Incorrect score");
@@ -245,8 +241,7 @@ async function addResult(id, string) {
     });
     if (player1Data.group !== player2Data.group) {
       bot.sendMessage(id, `players are in different groups`);
-    }
-    if (match) {
+    } else if (match) {
       bot.sendMessage(id, `match ${player1} ${player2} is already added`);
     } else {
       await Player.findOneAndUpdate(
@@ -262,8 +257,12 @@ async function addResult(id, string) {
         score1,
         player2: player2Data._id,
         score2,
+        link,
       }).save();
-      bot.sendMessage(id, `result ${string} is sucesfully added`);
+      bot.sendMessage(
+        id,
+        `result ${player1} vs ${player2} is sucesfully added`
+      );
     }
   } else {
     bot.sendMessage(id, `Incorrect Player name`);
