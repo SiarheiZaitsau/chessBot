@@ -7,7 +7,7 @@ const StatusSchema = new Schema({
     type: String,
     required: true,
     default: "registration",
-    enum: ["registration", "groupstage", "playoff"],
+    enum: ["registration", "groups", "playoff"],
   },
 });
 

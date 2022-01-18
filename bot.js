@@ -48,7 +48,7 @@ async function registerPlayer(chatId, query) {
           .then((response) =>
             bot.sendMessage(
               chatId,
-              `user ${query.name} is succesfully registred`
+              `user ${query.name} is successfully registered`
             )
           )
           .catch((e) => {
@@ -140,10 +140,10 @@ function shuffle(array) {
 // }
 async function addGroups() {
   const players = await Player.find({});
-  const shuffeledPlayers = shuffle(players);
+  const shuffledPlayers = shuffle(players);
   const idsA = [];
   const idsB = [];
-  shuffeledPlayers.forEach((item, index) => {
+  shuffledPlayers.forEach((item, index) => {
     if (index % 2 === 0) {
       idsA.push(item._id);
     } else {
@@ -183,11 +183,11 @@ async function startTournament(chatId) {
   if (status.tournamentStatus !== "registration") {
     bot.sendMessage(chatId, `tournament is already started`);
   } else {
-    status.tournamentStatus = "groupstage";
+    status.tournamentStatus = "groups";
     await status
       .save()
       .then(await addGroups())
-      .then(bot.sendMessage(chatId, `tournament has been succesfully started`))
+      .then(bot.sendMessage(chatId, `tournament has been successfully started`))
       .then(
         setTimeout(() => {
           sendGroup(chatId, "A");
@@ -261,7 +261,7 @@ async function addResult(id, string) {
       }).save();
       bot.sendMessage(
         id,
-        `result ${player1} vs ${player2} is sucesfully added`
+        `result ${player1} vs ${player2} is successfully added`
       );
     }
   } else {
