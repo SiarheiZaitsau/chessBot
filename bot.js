@@ -23,7 +23,6 @@ mongoose
   .connect(MONGODB_URI)
   .then(() => console.log("connected"))
   .catch((err) => console.log(`error is: ${err}`));
-helper.logStart();
 
 const Player = mongoose.model("players");
 const Status = mongoose.model("status");
@@ -81,66 +80,12 @@ async function sendPlayers(chatId, query) {
 
 bot.onText(/\/players/, (msg, [source, match]) => {
   const { id } = msg.chat;
-  sendPlayers(id, {});
+  helper.sendPlayers(id, {});
 });
 
-//   console.log("Working", msg.from.first_name);
-//   const chatId = helper.getChatId(msg);
-//   switch (msg.text) {
-//     case kb.home.favoritte:
-//       break;
-//     case kb.home.films:
-//       bot.sendMessage(chatId, `Выберите жанр:`, {
-//         reply_markup: {
-//           keyboard: keyboard.films,
-//         },
-//       });
-//       break;
-//     case kb.home.cimenas:
-//       break;
-//     case kb.back:
-//       bot.sendMessage(chatId, `Что хотите посмотреть?:`, {
-//         reply_markup: {
-//           keyboard: keyboard.home,
-//         },
-//       });
-//       break;
-//   }
-// });
-function shuffle(array) {
-  let currentIndex = array.length,
-    randomIndex;
-
-  // While there remain elements to shuffle...
-  while (currentIndex != 0) {
-    // Pick a remaining element...
-    randomIndex = Math.floor(Math.random() * currentIndex);
-    currentIndex--;
-
-    // And swap it with the current element.
-    [array[currentIndex], array[randomIndex]] = [
-      array[randomIndex],
-      array[currentIndex],
-    ];
-  }
-
-  return array;
-}
-
-// function addOpponents(players, groupIds) {
-//   console.log(players, 'players');
-//   console.log(groupIds, 'groupIds')
-//   const opponents = players.reduce((accum, item) => {
-//    if(groupIds.includes(item._id)) {
-//      accum.push(item.name)
-//    }
-//     return accum
-//   }, [])
-//   return opponents
-// }
 async function addGroups() {
   const players = await Player.find({});
-  const shuffledPlayers = shuffle(players);
+  const shuffledPlayers = helper.shuffle(players);
   const idsA = [];
   const idsB = [];
   shuffledPlayers.forEach((item, index) => {
@@ -212,7 +157,6 @@ async function addResult(id, string) {
   const splitted = string.split(" ");
   const player1 = splitted[0].toLowerCase();
   const splittedScore = splitted[1].split(":");
-  console.log(splitted, "splitted");
   const score1 = parseFloat(splittedScore[0].replace(",", "."));
   const score2 = parseFloat(splittedScore[1].replace(",", "."));
   const link = splitted[3] || undefined;
@@ -221,12 +165,8 @@ async function addResult(id, string) {
     bot.sendMessage(id, "incorrect score entry");
     throw new Error("Incorrect score");
   }
-  // const player1Data = await Player.findOneAndUpdate({ name: player1 }, { $inc: { score: score1 } });
-  // const player2Data = await Player.findOneAndUpdate({ name: player2 }, { $inc: { score: score2 } });
   const player1Data = await Player.findOne({ name: player1 });
   const player2Data = await Player.findOne({ name: player2 });
-  console.log(player1.group, "p1group");
-  console.log(player2.group, "p2group");
 
   if (player1Data && player2Data) {
     const match = await Result.findOne({
