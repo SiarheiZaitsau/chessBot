@@ -19,10 +19,11 @@ const PlayerSchema = new Schema({
   opponents: {
     type: [],
     default: [],
-  }
+  },
 });
 
+const Player = mongoose.model("players", PlayerSchema);
 
-export default mongoose.model("players", PlayerSchema);
-
-
+module.exports = {
+  Player,
+};

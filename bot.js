@@ -3,9 +3,9 @@ const helper = require("./helpers");
 const axios = require("axios");
 const mongoose = require("mongoose");
 const { LICHESS_API } = require("./constants");
-const Tournament, { TOURNAMENT_STATUS } = require('./models/tournament.model');
-const Player = require('./models/player.model');
-const Result = require('./models/result.model');
+const { TOURNAMENT_STATUS, Tournament } = require("./models/tournament.model");
+const { Player } = require("./models/player.model");
+const { Result } = require("./models/result.model");
 require("./models/player.model");
 require("./models/result.model");
 require("./models/tournament.model");
@@ -28,13 +28,31 @@ mongoose
   .then(() => console.log("connected"))
   .catch((err) => console.log(`error is: ${err}`));
 
-
+async function announceTournament(id) {
+  const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
+  console.log(tournament);
+  if (tournament[0].status !== TOURNAMENT_STATUS.REGISTRATION) {
+    new Tournament({
+      status: TOURNAMENT_STATUS.REGISTRATION,
+    })
+      .save()
+      .then((response) => {
+        bot.sendMessage(id, " Tournament is successfully Registration is open");
+      });
+  } else {
+    bot.sendMessage(id, "Tournament is already active");
+  }
+}
+bot.onText(/\/announce/, (msg, [source, match]) => {
+  const { id } = msg.chat;
+  announceTournament(id);
+});
 
 async function registerPlayer(chatId, query) {
-  const tournament = await Tournament.find({});
-
-  if (tournament.status !== TOURNAMENT_STATUS.REGISTRATION) {
-    bot.sendMessage(chatId, `Sorry tournament is already started`);
+  const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
+  console.log(tournament, "tournament");
+  if (tournament[0].status !== TOURNAMENT_STATUS.REGISTRATION) {
+    bot.sendMessage(chatId, `Sorry registration is closed`);
   } else {
     axios
       .get(`${LICHESS_API}/${query.name}`)
@@ -96,25 +114,26 @@ async function addGroups() {
   });
   console.log(idsA, "a");
   console.log(idsB, "b");
-
-  await Player.updateMany(
-    { _id: { $in: idsA } },
-    {
-      $set: {
-        group: "A",
+  Promise.all([
+    await Player.updateMany(
+      { _id: { $in: idsA } },
+      {
+        $set: {
+          group: "A",
+        },
+      }
+    ),
+    await Player.updateMany(
+      {
+        _id: { $in: idsB },
       },
-    }
-  );
-  await Player.updateMany(
-    {
-      _id: { $in: idsB },
-    },
-    {
-      $set: {
-        group: "B",
-      },
-    }
-  );
+      {
+        $set: {
+          group: "B",
+        },
+      }
+    ),
+  ]);
 }
 
 function sendGroup(chatId, group) {
@@ -123,7 +142,7 @@ function sendGroup(chatId, group) {
 }
 
 async function startTournament(chatId) {
-  const tournament = await Tournament.findOne();
+  const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
   if (tournament.status !== TOURNAMENT_STATUS.REGISTRATION) {
     bot.sendMessage(chatId, `tournament is already started`);
   } else {
@@ -161,9 +180,10 @@ async function addResult(id, string) {
     bot.sendMessage(id, "incorrect score entry");
     throw new Error("Incorrect score");
   }
-  
-  const player1Data = await Player.findOne({ name: player1 });
-  const player2Data = await Player.findOne({ name: player2 });
+  const [player1Data, player2Data] = await Promise.all([
+    await Player.findOne({ name: player1 }),
+    await Player.findOne({ name: player2 }),
+  ]);
 
   if (player1Data && player2Data) {
     const match = await Result.findOne({
@@ -181,21 +201,23 @@ async function addResult(id, string) {
     } else if (match) {
       bot.sendMessage(id, `match ${player1} ${player2} is already added`);
     } else {
-      await Player.findOneAndUpdate(
-        { _id: player1Data._id },
-        { $inc: { score: score1 } }
-      );
-      await Player.findOneAndUpdate(
-        { _id: player2Data._id },
-        { $inc: { score: score2 } }
-      );
-      new Result({
-        player1: player1Data._id,
-        score1,
-        player2: player2Data._id,
-        score2,
-        link,
-      }).save();
+      Promise.all([
+        await Player.findOneAndUpdate(
+          { _id: player1Data._id },
+          { $inc: { score: score1 } }
+        ),
+        await Player.findOneAndUpdate(
+          { _id: player2Data._id },
+          { $inc: { score: score2 } }
+        ),
+        new Result({
+          player1: player1Data._id,
+          score1,
+          player2: player2Data._id,
+          score2,
+          link,
+        }).save(),
+      ]);
       bot.sendMessage(
         id,
         `result ${player1} vs ${player2} is successfully added`

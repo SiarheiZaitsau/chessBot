@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { TOURNAMENT_STATUS } = require("./status.model");
+const { TOURNAMENT_STATUS } = require("./tournament.model");
 require("./player.model");
 
 const Schema = mongoose.Schema;
@@ -34,4 +34,8 @@ const ResultsSchema = new Schema({
   },
 });
 
-export default mongoose.model("results", ResultsSchema);
+const Result = mongoose.model("results", ResultsSchema);
+
+module.exports = {
+  Result,
+};
