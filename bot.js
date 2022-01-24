@@ -119,7 +119,7 @@ bot.onText(/\/players/, (msg, [source, match]) => {
   helper.sendPlayers(id, {});
 });
 
-async function addGroups() {
+async function addGroups() { // shuffle вынести в helpers
   const players = await Player.find({});
   const shuffledPlayers = helper.shuffle(players);
   const idsA = [];
@@ -196,7 +196,7 @@ bot.onText(/\/start/, (msg) => {
   startTournament(id);
 });
 
-async function addResult(id, string) {
+async function addResult(id, string) { // const { player1, player2, score1, ...} = functionName(string)
   const splitted = string.split(" ");
   const player1 = splitted[0].toLowerCase();
   const splittedScore = splitted[1].split(":");
@@ -315,7 +315,7 @@ bot.onText(/\/status/, (msg) => {
   checkStatus(id);
 });
 
-function groupByScore(players, f) {
+function groupByScore(players, f) { // вынести
   const groups = {};
   players.forEach(function (player) {
     const group = JSON.stringify(f(player));
@@ -326,10 +326,12 @@ function groupByScore(players, f) {
     return groups[group];
   });
 }
-const sameScoreGroupPlayers = (group) =>
+// вынести
+const sameScoreGroupPlayers = (group) => 
   groupByScore(group, function (player) {
     return [player.score];
   });
+  
 async function countTieBreaker(groupPlayers) {
   groupPlayers.forEach((group) => {
     // console.log(group, "group");
