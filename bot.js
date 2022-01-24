@@ -30,14 +30,19 @@ mongoose
 
 async function announceTournament(id) {
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
-  console.log(tournament);
-  if (tournament[0].status !== TOURNAMENT_STATUS.REGISTRATION) {
+  if (
+    !tournament[0] ||
+    tournament[0]?.status !== TOURNAMENT_STATUS.REGISTRATION
+  ) {
     new Tournament({
       status: TOURNAMENT_STATUS.REGISTRATION,
     })
       .save()
       .then((response) => {
-        bot.sendMessage(id, " Tournament is successfully Registration is open");
+        bot.sendMessage(
+          id,
+          "Tournament is successfully started, registration is open"
+        );
       });
   } else {
     bot.sendMessage(id, "Tournament is already active");
@@ -70,7 +75,17 @@ async function registerPlayer(chatId, query) {
           .catch((e) => {
             console.log(e);
             bot.sendMessage(chatId, `User is already exist`);
-          });
+          })
+          .then(
+            setTimeout(() => {
+              bot.sendMessage(chatId, `Список участников:`);
+            }, 500)
+          )
+          .then(
+            setTimeout(() => {
+              sendPlayers(chatId);
+            }, 1000)
+          );
       })
       .catch(function (error) {
         bot.sendMessage(chatId, `Incorrect username`);
@@ -78,9 +93,9 @@ async function registerPlayer(chatId, query) {
       });
   }
 }
-bot.onText(/\/register (.+)/, (msg, [source, match]) => {
+bot.onText(/\/register (.+)/, (msg, [source, value]) => {
   const { id } = msg.chat;
-  const name = match.match(/[^\/]+$/)[0];
+  const name = value.match(/[^\/]+$/)[0];
   registerPlayer(id, { name });
 });
 
@@ -91,7 +106,11 @@ async function sendPlayers(chatId, query) {
         return `${index + 1} ${player.name}`;
       })
       .join("\n");
-    bot.sendMessage(chatId, res);
+    if (players.length > 0) {
+      bot.sendMessage(chatId, res);
+    } else {
+      bot.sendMessage(chatId, "На данный момент список участников пуст");
+    }
   });
 }
 
@@ -115,7 +134,7 @@ async function addGroups() {
   console.log(idsA, "a");
   console.log(idsB, "b");
   Promise.all([
-    await Player.updateMany(
+    Player.updateMany(
       { _id: { $in: idsA } },
       {
         $set: {
@@ -123,7 +142,7 @@ async function addGroups() {
         },
       }
     ),
-    await Player.updateMany(
+    Player.updateMany(
       {
         _id: { $in: idsB },
       },
@@ -142,11 +161,20 @@ function sendGroup(chatId, group) {
 }
 
 async function startTournament(chatId) {
-  const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
-  if (tournament.status !== TOURNAMENT_STATUS.REGISTRATION) {
-    bot.sendMessage(chatId, `tournament is already started`);
+  const [tournaments, participants] = await Promise.all([
+    Tournament.find().sort({ _id: -1 }).limit(1),
+    Player.find({}),
+  ]);
+
+  console.log(participants.length, "ychastniki");
+  const tournament = tournaments[0];
+  console.log(tournament, "tournament");
+  if (!tournament || tournament?.status !== TOURNAMENT_STATUS.REGISTRATION) {
+    bot.sendMessage(chatId, `tournament is already started or not announced`);
+  } else if (participants.length < 4 || participants.length % 2 > 0) {
+    bot.sendMessage(chatId, `Количество участников меньше 4х или нечетное`);
   } else {
-    tournament.TOURNAMENT_STATUS = TOURNAMENT_STATUS.GROUPS;
+    tournament.status = TOURNAMENT_STATUS.GROUPS;
     await tournament
       .save()
       .then(await addGroups())
@@ -181,10 +209,11 @@ async function addResult(id, string) {
     throw new Error("Incorrect score");
   }
   const [player1Data, player2Data] = await Promise.all([
-    await Player.findOne({ name: player1 }),
-    await Player.findOne({ name: player2 }),
+    Player.findOne({ name: player1 }),
+    Player.findOne({ name: player2 }),
   ]);
-
+  console.log(player1Data, "p1data");
+  console.log(player2Data, "p2data");
   if (player1Data && player2Data) {
     const match = await Result.findOne({
       $and: [
@@ -199,14 +228,21 @@ async function addResult(id, string) {
     if (player1Data.group !== player2Data.group) {
       bot.sendMessage(id, `players are in different groups`);
     } else if (match) {
-      bot.sendMessage(id, `match ${player1} ${player2} is already added`);
+      const [resultPlayer1, resultPlayer2] = await Promise.all([
+        Player.findOne({ _id: match.player1 }),
+        Player.findOne({ _id: match.player2 }),
+      ]);
+      bot.sendMessage(
+        id,
+        `Результат ${resultPlayer1.name} ${match.score1}:${match.score2} ${resultPlayer2.name} уже добавлен`
+      );
     } else {
       Promise.all([
-        await Player.findOneAndUpdate(
+        Player.findOneAndUpdate(
           { _id: player1Data._id },
           { $inc: { score: score1 } }
         ),
-        await Player.findOneAndUpdate(
+        Player.findOneAndUpdate(
           { _id: player2Data._id },
           { $inc: { score: score2 } }
         ),
@@ -223,13 +259,172 @@ async function addResult(id, string) {
         `result ${player1} vs ${player2} is successfully added`
       );
     }
+  } else if (!player1Data) {
+    bot.sendMessage(id, `Неверное имя участника ${player1}`);
   } else {
-    bot.sendMessage(id, `Incorrect Player name`);
+    bot.sendMessage(id, `Неверное имя участника ${player2}`);
   }
 }
 bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
   const { id } = msg.chat;
   addResult(id, match);
+});
+async function showGroupStandings(chatId, group) {
+  const players = await Player.find({ group });
+  bot.sendMessage(chatId, `group ${group}`);
+  const sortedPlayers = players.sort((b, a) => {
+    return a.score - b.score;
+  });
+  const res = sortedPlayers
+    .map((player, index) => {
+      return `${index + 1}) ${player.name} ${player.score}pts`;
+    })
+    .join("\n");
+  setTimeout(
+    () => {
+      bot.sendMessage(chatId, res);
+    },
+    500,
+    chatId,
+    res
+  );
+}
+async function checkStatus(chatId) {
+  const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
+  console.log(tournament);
+  switch (tournament[0].status) {
+    case TOURNAMENT_STATUS.REGISTRATION:
+      bot.sendMessage(chatId, `Идет регистрация Список участников:`);
+      setTimeout(() => {
+        sendPlayers(chatId);
+      }, 1000);
+      break;
+    case TOURNAMENT_STATUS.GROUPS:
+      bot.sendMessage(chatId, `Идет Групповая стадия турнира:`);
+      setTimeout(() => {
+        showGroupStandings(chatId, "A");
+      }, 1000);
+      setTimeout(() => {
+        showGroupStandings(chatId, "B");
+      }, 2000);
+      break;
+  }
+}
+bot.onText(/\/status/, (msg) => {
+  const { id } = msg.chat;
+  checkStatus(id);
+});
+
+function groupByScore(players, f) {
+  const groups = {};
+  players.forEach(function (player) {
+    const group = JSON.stringify(f(player));
+    groups[group] = groups[group] || [];
+    groups[group].push(player);
+  });
+  return Object.keys(groups).map(function (group) {
+    return groups[group];
+  });
+}
+const sameScoreGroupPlayers = (group) =>
+  groupByScore(group, function (player) {
+    return [player.score];
+  });
+async function countTieBreaker(groupPlayers) {
+  groupPlayers.forEach((group) => {
+    // console.log(group, "group");
+    if (group.length > 1) {
+      // Promise.all(
+      group.forEach(async (player, index, players) => {
+        if (index < players.length - 1) {
+          for (let i = 1; i < players.length - index; i++) {
+            console.log(player, "current");
+            console.log(players[index + i], "next");
+            let match = await Result.findOne({
+              $and: [
+                {
+                  $or: [{ player1: player._id }, { player2: player._id }],
+                },
+                {
+                  $or: [
+                    { player1: players[index + i]._id },
+                    { player2: players[index + i]._id },
+                  ],
+                },
+              ],
+            });
+            Promise.all([
+              Player.findOneAndUpdate(
+                { _id: match.player1 },
+                { $inc: { personalMatchesScore: match.score1 } }
+              ),
+              Player.findOneAndUpdate(
+                {
+                  _id: match.player2,
+                },
+                { $inc: { personalMatchesScore: match.score2 } }
+              ),
+            ]);
+          }
+        }
+      });
+    }
+  });
+}
+async function showFinalGroupStandings(chatId, group) {
+  const players = await Player.find({ group });
+  const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
+  const tournament = tournaments[0];
+  let tiebreak = false;
+  const sortedPlayers = players.sort((b, a) => {
+    if (a.score === b.score) {
+      if (a.personalMatchesScore === b.personalMatchesScore) {
+        tiebreak = true;
+        bot.sendMessage(
+          chatId,
+          `player ${a.name} and ${b.name} need to play tiebreak`
+        );
+      }
+      return b.personalMatchesScore - a.personalMatchesScore;
+    }
+    return a.score > b.score ? 1 : -1;
+  });
+  if (tiebreak) {
+    tournament.status = TOURNAMENT_STATUS.TIEBREAK;
+    await tournament.save();
+  }
+  const res = sortedPlayers
+    .map((player, index) => {
+      return `${index + 1}) ${player.name} ${player.score}pts ${
+        player.personalMatchesScore
+      } tiebreak points`;
+    })
+    .join("\n");
+  bot.sendMessage(chatId, res);
+}
+async function finishGroups(chatId) {
+  const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
+  const tournament = tournaments[0];
+  if (!tournament || tournament?.status !== TOURNAMENT_STATUS.GROUPS) {
+    bot.sendMessage(chatId, "Групповая стадия не активна");
+  } else {
+    const [playersA, playersB] = await Promise.all([
+      Player.find({ group: "A" }),
+      Player.find({ group: "B" }),
+    ]);
+    countTieBreaker(sameScoreGroupPlayers(playersA));
+    // countTieBreaker(sameScoreGroupPlayers(playersB));
+    showFinalGroupStandings(chatId, "A");
+    // showFinalGroupStandings(chatId, "B");
+    if (tournament.status !== TOURNAMENT_STATUS.TIEBREAK) {
+      tournament.status = TOURNAMENT_STATUS.PLAYOFF;
+      await tournament.save();
+    }
+  }
+}
+bot.onText(/\/finishGroups/, (msg) => {
+  const { id } = msg.chat;
+  finishGroups(id);
 });
 
 bot.on("polling_error", console.log);

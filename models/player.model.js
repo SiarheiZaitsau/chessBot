@@ -16,9 +16,9 @@ const PlayerSchema = new Schema({
     type: Number,
     default: 0,
   },
-  opponents: {
-    type: [],
-    default: [],
+  personalMatchesScore: {
+    type: Number,
+    default: 0,
   },
 });
 
