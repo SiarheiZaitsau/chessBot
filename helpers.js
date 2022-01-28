@@ -31,4 +31,31 @@ module.exports = {
 
     return array;
   },
+  groupByScore: groupByScore,
+
+  sameScoreGroupPlayers: (group) =>
+    groupByScore(group, function (player) {
+      return [player.score];
+    }),
+  sameScoreAndPersonalMatchesGroupPlayers: (group) =>
+    groupByScore(group, function (player) {
+      return [player.score, player.personalMatchesScore];
+    }),
+  sameTiebreakPlayers: (group) =>
+    groupByScore(group, function (player) {
+      return [player.score, player.personalMatchesScore, player.tiebreakScore];
+    }),
 };
+
+function groupByScore(players, f) {
+  // вынести
+  const groups = {};
+  players.forEach(function (player) {
+    const group = JSON.stringify(f(player));
+    groups[group] = groups[group] || [];
+    groups[group].push(player);
+  });
+  return Object.keys(groups).map(function (group) {
+    return groups[group];
+  });
+}

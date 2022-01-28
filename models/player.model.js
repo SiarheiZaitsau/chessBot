@@ -20,6 +20,10 @@ const PlayerSchema = new Schema({
     type: Number,
     default: 0,
   },
+  tiebreakScore: {
+    type: Number,
+    default: 0,
+  },
 });
 
 const Player = mongoose.model("players", PlayerSchema);
