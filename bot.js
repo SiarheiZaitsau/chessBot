@@ -6,9 +6,11 @@ const { LICHESS_API } = require("./constants");
 const { TOURNAMENT_STATUS, Tournament } = require("./models/tournament.model");
 const { Player } = require("./models/player.model");
 const { Result } = require("./models/result.model");
+const { Tiebreak } = require("./models/tiebreak.model");
 require("./models/player.model");
 require("./models/result.model");
 require("./models/tournament.model");
+require("./models/tiebreak.model");
 
 const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A";
 const MONGODB_URI =
@@ -95,7 +97,7 @@ async function registerPlayer(chatId, query) {
 }
 bot.onText(/\/register (.+)/, (msg, [source, value]) => {
   const { id } = msg.chat;
-  const name = value.match(/[^\/]+$/)[0];
+  const name = value.match(/[^\/]+$/)[0].trim();
   registerPlayer(id, { name });
 });
 
@@ -199,7 +201,7 @@ bot.onText(/\/start/, (msg) => {
 
 async function addResult(id, string) {
   // const { player1, player2, score1, ...} = functionName(string)
-  const splitted = string.split(" ");
+  const splitted = string.replace(/ +(?= )/g, "").split(" ");
   const player1 = splitted[0].toLowerCase();
   const splittedScore = splitted[1].split(":");
   const score1 = parseFloat(splittedScore[0].replace(",", "."));
@@ -258,7 +260,7 @@ async function addResult(id, string) {
       ]);
       bot.sendMessage(
         id,
-        `result ${player1} vs ${player2} is successfully added`
+        `result ${player1} ${score1}:${score2} ${player2} is successfully added`
       );
     }
   } else if (!player1Data) {
@@ -269,7 +271,7 @@ async function addResult(id, string) {
 }
 bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
   const { id } = msg.chat;
-  addResult(id, match);
+  addResult(id, match.trim());
 });
 async function showGroupStandings(chatId, group) {
   const players = await Player.find({ group });
@@ -309,6 +311,19 @@ async function checkStatus(chatId) {
       setTimeout(() => {
         showGroupStandings(chatId, "B");
       }, 2000);
+      break;
+    case TOURNAMENT_STATUS.TIEBREAK:
+      const tiebreak = await Tiebreak.find({});
+      const res = tiebreak
+        .map((match, index) => {
+          return `${index + 1}) ${match.player1} ${match.player1Score}:${
+            match.player2Score
+          } ${match.player2}`;
+        })
+        .join("\n");
+      bot
+        .sendMessage(chatId, "Идут Тайбрейки")
+        .then(() => bot.sendMessage(chatId, res));
       break;
   }
 }
@@ -385,17 +400,33 @@ async function showGroupStandingsByPersonalMatches(chatId, group) {
     helper.sameScoreAndPersonalMatchesGroupPlayers(sortedPlayers);
   console.log(groupByPersonalMatches, "tiegroups");
   let tieBreakPairs = [];
+  const dbPairs = [];
   groupByPersonalMatches.forEach((players) => {
     if (players.length > 1) {
       const res = players.flatMap((player, i) => {
         return players.slice(i + 1).map((w) => {
+          dbPairs.push({
+            player1: player.name,
+            player1Id: player._id,
+            player2: w.name,
+            player2Id: w.id,
+          });
           return { player1: player.name, player2: w.name };
         });
       });
       tieBreakPairs.push(res);
     }
   });
-  console.log(tieBreakPairs, "pairs");
+  await Promise.all(
+    dbPairs.map(async (pair) => {
+      new Tiebreak({
+        player1: pair.player1,
+        player1Id: pair.player1Id,
+        player2: pair.player2,
+        player2Id: pair.player2Id,
+      }).save();
+    })
+  );
   if (tieBreakPairs.length > 0) {
     tournament.status = TOURNAMENT_STATUS.TIEBREAK;
     await tournament.save();
@@ -403,7 +434,7 @@ async function showGroupStandingsByPersonalMatches(chatId, group) {
       const res = tieBreakPairs
         .map((players, index) => {
           return players.map((player) => {
-            return `${player.player1} против ${player.player2}`;
+            return `${player.player1} vs ${player.player2}`;
           });
         })
         .join("\n");
@@ -427,6 +458,8 @@ async function finishGroups(chatId) {
     ]);
     await countPersonalMatches(helper.sameScoreGroupPlayers(playersA));
     showGroupStandingsByPersonalMatches(chatId, "A");
+    await countPersonalMatches(helper.sameScoreGroupPlayers(playersB));
+    showGroupStandingsByPersonalMatches(chatId, "B");
   }
 }
 bot.onText(/\/finishGroups/, (msg) => {
@@ -437,7 +470,7 @@ bot.onText(/\/finishGroups/, (msg) => {
 async function addTiebreakResult(id, string) {
   const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
   const tournament = tournaments[0];
-  const splitted = string.split(" ");
+  const splitted = string.replace(/ +(?= )/g, "").split(" ");
   const player1 = splitted[0].toLowerCase();
   const splittedScore = splitted[1].split(":");
   const score1 = parseFloat(splittedScore[0].replace(",", "."));
@@ -452,11 +485,21 @@ async function addTiebreakResult(id, string) {
     bot.sendMessage(id, "incorrect score entry");
     throw new Error("Incorrect score");
   }
-  const [player1Data, player2Data] = await Promise.all([
+  const [player1Data, player2Data, tiebreakMatch] = await Promise.all([
     Player.findOne({ name: player1 }),
     Player.findOne({ name: player2 }),
+    Tiebreak.findOne({
+      $and: [
+        {
+          $or: [{ player1: player1 }, { player2: player2 }],
+        },
+        {
+          $or: [{ player1: player1 }, { player2: player2 }],
+        },
+      ],
+    }),
   ]);
-  if (player1Data && player2Data) {
+  if (player1Data && player2Data && tiebreakMatch) {
     const match = await Result.findOne({
       $and: [
         {
@@ -495,18 +538,27 @@ async function addTiebreakResult(id, string) {
         id,
         `result ${player1} vs ${player2} is successfully added`
       );
+      if (tiebreakMatch.player1 === player1) {
+        tiebreakMatch.player1Score = score1;
+        tiebreakMatch.player2Score = score2;
+        await tiebreakMatch.save();
+      } else {
+        tiebreakMatch.player1Score = score2;
+        tiebreakMatch.player2Score = score1;
+        await tiebreakMatch.save();
+      }
     }
   } else if (!player1Data) {
     bot.sendMessage(id, `Неверное имя участника ${player1}`);
-  } else {
+  } else if (!player2Data) {
     bot.sendMessage(id, `Неверное имя участника ${player2}`);
+  } else {
+    bot.sendMessage(id, `Пара ${player1} ${player2} не существует`);
   }
 }
 async function finishTieBreaks(chatId, group) {
-  const players = await Player.find({ group });
   const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
   const tournament = tournaments[0];
-  let tiebreak = false;
   if (!tournament || tournament?.status !== TOURNAMENT_STATUS.TIEBREAK) {
     bot.sendMessage(chatId, "Тайбрейк стадия не активна");
   } else {
@@ -514,7 +566,9 @@ async function finishTieBreaks(chatId, group) {
       Player.find({ group: "A" }),
       Player.find({ group: "B" }),
     ]);
-    showFinalStandings(chatId, "A");
+    await showFinalStandings(chatId, "A");
+    await showFinalStandings(chatId, "B");
+    bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ В ПЛЕЙОФЕ");
   }
 }
 async function showFinalStandings(chatId, group) {
@@ -522,31 +576,31 @@ async function showFinalStandings(chatId, group) {
   const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
 
   const tournament = tournaments[0];
+  const randomNumbers = helper.generateRandomNumbers();
+  let i = 0;
   const sortedPlayers = players.sort((a, b) => {
     if (a.score === b.score) {
       if (a.personalMatchesScore === b.personalMatchesScore) {
         if (a.tiebreakScore === b.tiebreakScore) {
           if (!a.randomNumber) {
-            a.randomNumber = Math.floor(Math.random() * 1000);
+            a.randomNumber = randomNumbers[i];
             bot.sendMessage(
               chatId,
               `Random Number for ${a.name} = ${a.randomNumber}`
             );
+            i++;
           }
           if (!b.randomNumber) {
-            b.randomNumber = Math.floor(Math.random() * 1000);
+            b.randomNumber = randomNumbers[i];
             bot.sendMessage(
               chatId,
-              `Random Number for ${b.name} = ${a.randomNumber}`
+              `Random Number for ${b.name} = ${b.randomNumber}`
             );
+            i++;
           }
           return a.randomNumber > b.randomNumber ? -1 : 1;
         }
-        return a.tiebreakScore > b.tiebreakScore
-          ? -1
-          : a.tiebreakScore > b.tiebreakScore
-          ? -1
-          : 1;
+        return a.tiebreakScore > b.tiebreakScore ? -1 : 1;
       } else {
         return a.personalMatchesScore < b.personalMatchesScore ? 1 : -1;
       }
@@ -556,23 +610,16 @@ async function showFinalStandings(chatId, group) {
   });
   const res = sortedPlayers
     .map((player, index) => {
-      return `${index + 1}) ${player.name} ${player.score} pts ${
+      return `${index + 1}) ${player.name} ${player.score} pts | ${
         player.personalMatchesScore
-      } personal matches score ${player?.randomNumber} rndm`;
+      } personal matches score | ${player.tiebreakScore} tiebreak score |  ${
+        player.randomNumber ? `${player.randomNumber} random score` : ""
+      }`;
     })
     .join("\n");
   bot.sendMessage(chatId, res);
   tournament.status = TOURNAMENT_STATUS.PLAYOFF;
   await tournament.save();
-  bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ В ПЛЕЙОФЕ");
-  //   const res = sortedPlayers
-  //     .map((player, index) => {
-  //       return `${index + 1}) ${player.name} ${player.score} pts ${
-  //         player.personalMatchesScore
-  //       } personal matches score`;
-  //     })
-  //     .join("\n");
-  //   bot.sendMessage(chatId, res);
 }
 bot.onText(/\/finishTiebreak/, (msg) => {
   const { id } = msg.chat;

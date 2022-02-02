@@ -31,6 +31,13 @@ module.exports = {
 
     return array;
   },
+  generateRandomNumbers(players, f) {
+    const numbers = Array(100)
+      .fill()
+      .map((_, index) => index + 1);
+    numbers.sort(() => Math.random() - 0.5);
+    return numbers;
+  },
   groupByScore: groupByScore,
 
   sameScoreGroupPlayers: (group) =>
