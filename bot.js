@@ -562,10 +562,6 @@ async function finishTieBreaks(chatId, group) {
   if (!tournament || tournament?.status !== TOURNAMENT_STATUS.TIEBREAK) {
     bot.sendMessage(chatId, "Тайбрейк стадия не активна");
   } else {
-    const [playersA, playersB] = await Promise.all([
-      Player.find({ group: "A" }),
-      Player.find({ group: "B" }),
-    ]);
     await showFinalStandings(chatId, "A");
     await showFinalStandings(chatId, "B");
     bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ В ПЛЕЙОФЕ");
