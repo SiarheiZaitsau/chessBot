@@ -3,14 +3,20 @@ const helper = require("./helpers");
 const axios = require("axios");
 const mongoose = require("mongoose");
 const { LICHESS_API } = require("./constants");
-const { TOURNAMENT_STATUS, Tournament } = require("./models/tournament.model");
+const {
+  TOURNAMENT_STATUS,
+  Tournament,
+  GROUP_NAMES,
+} = require("./models/tournament.model");
 const { Player } = require("./models/player.model");
 const { Result } = require("./models/result.model");
 const { Tiebreak } = require("./models/tiebreak.model");
+const { Playoff, PLAYOFF_STATUS } = require("./models/playoff.model");
 require("./models/player.model");
 require("./models/result.model");
 require("./models/tournament.model");
 require("./models/tiebreak.model");
+require("./models/playoff.model");
 
 const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A";
 const MONGODB_URI =
@@ -121,41 +127,36 @@ bot.onText(/\/players/, (msg, [source, match]) => {
   helper.sendPlayers(id, {});
 });
 
-async function addGroups() {
-  // shuffle вынести в helpers
+async function addGroups(numberOfGroups) {
   const players = await Player.find({});
   const shuffledPlayers = helper.shuffle(players);
-  const idsA = [];
-  const idsB = [];
-  shuffledPlayers.forEach((item, index) => {
-    if (index % 2 === 0) {
-      idsA.push(item._id);
-    } else {
-      idsB.push(item._id);
-    }
+  const numberOfPlayers = shuffledPlayers.length;
+  const numberOfPlayersInGroup = numberOfPlayers / numberOfGroups;
+  // const idsA = [];
+  // const idsB = [];
+  const playersInGroup = helper.splitArrayIntoChunksOfLen(
+    shuffledPlayers,
+    numberOfPlayersInGroup
+  );
+  const groupsIds = playersInGroup.map((players, index) => {
+    const ids = players.map((player) => {
+      return player._id;
+    });
+    return ids;
   });
-  console.log(idsA, "a");
-  console.log(idsB, "b");
-  Promise.all([
-    Player.updateMany(
-      { _id: { $in: idsA } },
-      {
-        $set: {
-          group: "A",
-        },
-      }
-    ),
-    Player.updateMany(
-      {
-        _id: { $in: idsB },
-      },
-      {
-        $set: {
-          group: "B",
-        },
-      }
-    ),
-  ]);
+  await Promise.all(
+    groupsIds.map(async (ids, index) => {
+      console.log(ids, "ids");
+      await Player.updateMany(
+        { _id: { $in: ids } },
+        {
+          $set: {
+            group: `${GROUP_NAMES[index]}`,
+          },
+        }
+      );
+    })
+  );
 }
 
 function sendGroup(chatId, group) {
@@ -163,13 +164,12 @@ function sendGroup(chatId, group) {
   sendPlayers(chatId, { group });
 }
 
-async function startTournament(chatId) {
+async function startTournament(chatId, numberOfGroups) {
   const [tournaments, participants] = await Promise.all([
     Tournament.find().sort({ _id: -1 }).limit(1),
     Player.find({}),
   ]);
 
-  console.log(participants.length, "ychastniki");
   const tournament = tournaments[0];
   console.log(tournament, "tournament");
   if (!tournament || tournament?.status !== TOURNAMENT_STATUS.REGISTRATION) {
@@ -178,28 +178,41 @@ async function startTournament(chatId) {
     bot.sendMessage(chatId, `Количество участников меньше 4х или нечетное`);
   } else {
     tournament.status = TOURNAMENT_STATUS.GROUPS;
+    tournament.groupsNumber = numberOfGroups;
     await tournament
       .save()
-      .then(await addGroups())
+      .then(await addGroups(numberOfGroups))
       .then(bot.sendMessage(chatId, `tournament has been successfully started`))
       .then(
         setTimeout(() => {
           sendGroup(chatId, "A");
-        }, 1000)
+        }, 500)
       )
       .then(
         setTimeout(() => {
           sendGroup(chatId, "B");
-        }, 2000)
+        }, 5000)
+      )
+      .then(
+        setTimeout(() => {
+          sendGroup(chatId, "C");
+        }, 10000)
+      )
+      .then(
+        setTimeout(() => {
+          sendGroup(chatId, "D");
+        }, 15000)
       );
   }
 }
 bot.onText(/\/start/, (msg) => {
   const { id } = msg.chat;
-  startTournament(id);
+  startTournament(id, 4);
 });
 
 async function addResult(id, string) {
+  const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
+  const stage = tournament[0].status;
   // const { player1, player2, score1, ...} = functionName(string)
   const splitted = string.replace(/ +(?= )/g, "").split(" ");
   const player1 = splitted[0].toLowerCase();
@@ -208,65 +221,821 @@ async function addResult(id, string) {
   const score2 = parseFloat(splittedScore[1].replace(",", "."));
   const link = splitted[3] || undefined;
   const player2 = splitted[2].toLowerCase();
-  if ((score1 + score2) % 1 > 0) {
-    bot.sendMessage(id, "incorrect score entry");
-    throw new Error("Incorrect score");
+  if (stage === TOURNAMENT_STATUS.GROUPS) {
+    if ((score1 + score2) % 1 > 0) {
+      bot.sendMessage(id, "incorrect score entry");
+      throw new Error("Incorrect score");
+    }
+    const [player1Data, player2Data] = await Promise.all([
+      Player.findOne({ name: player1 }),
+      Player.findOne({ name: player2 }),
+    ]);
+    if (player1Data && player2Data) {
+      const match = await Result.findOne({
+        $and: [
+          {
+            $or: [{ player1: player1Data._id }, { player2: player1Data._id }],
+          },
+          {
+            $or: [{ player1: player2Data._id }, { player2: player2Data._id }],
+          },
+          { stage: stage },
+        ],
+      });
+      if (
+        player1Data.group !== player2Data.group &&
+        stage === TOURNAMENT_STATUS.GROUPS
+      ) {
+        bot.sendMessage(id, `players are in different groups`);
+      } else if (match) {
+        const [resultPlayer1, resultPlayer2] = await Promise.all([
+          Player.findById(match.player1),
+          Player.findById(match.player2),
+        ]);
+        bot.sendMessage(
+          id,
+          `Результат ${resultPlayer1.name} ${match.score1}:${match.score2} ${resultPlayer2.name} уже добавлен`
+        );
+      } else {
+        Promise.all([
+          Player.findOneAndUpdate(
+            { _id: player1Data._id },
+            { $inc: { score: score1 } }
+          ),
+          Player.findOneAndUpdate(
+            { _id: player2Data._id },
+            { $inc: { score: score2 } }
+          ),
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            link,
+          }).save(),
+        ]);
+        bot.sendMessage(
+          id,
+          `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+        );
+      }
+    } else if (!player1Data) {
+      bot.sendMessage(id, `Неверное имя участника ${player1}`);
+    } else {
+      bot.sendMessage(id, `Неверное имя участника ${player2}`);
+    }
+  } else if (stage === TOURNAMENT_STATUS.PLAYOFF) {
+    addPlayoffResult(player1, player2, score1, score2, link, id);
   }
+}
+async function addPlayoffResult(player1, player2, score1, score2, link, id) {
+  const lastMatch = await Playoff.find({
+    $and: [
+      {
+        $or: [{ player1: player1 }, { player2: player1 }],
+      },
+      {
+        $or: [{ player1: player2 }, { player2: player2 }],
+      },
+    ],
+  })
+    .sort({ _id: -1 })
+    .limit(1);
+  const match = lastMatch[0];
+  console.log(match, "match");
   const [player1Data, player2Data] = await Promise.all([
     Player.findOne({ name: player1 }),
     Player.findOne({ name: player2 }),
   ]);
-  if (player1Data && player2Data) {
-    const match = await Result.findOne({
-      $and: [
-        {
-          $or: [{ player1: player1Data._id }, { player2: player1Data._id }],
-        },
-        {
-          $or: [{ player1: player2Data._id }, { player2: player2Data._id }],
-        },
-        { stage: TOURNAMENT_STATUS.GROUPS },
-      ],
-    });
-    console.log(match, "match");
-    if (player1Data.group !== player2Data.group) {
-      bot.sendMessage(id, `players are in different groups`);
-    } else if (match) {
-      const [resultPlayer1, resultPlayer2] = await Promise.all([
-        Player.findById(match.player1),
-        Player.findById(match.player2),
-      ]);
-      bot.sendMessage(
-        id,
-        `Результат ${resultPlayer1.name} ${match.score1}:${match.score2} ${resultPlayer2.name} уже добавлен`
-      );
-    } else {
-      Promise.all([
-        Player.findOneAndUpdate(
-          { _id: player1Data._id },
-          { $inc: { score: score1 } }
-        ),
-        Player.findOneAndUpdate(
-          { _id: player2Data._id },
-          { $inc: { score: score2 } }
-        ),
-        new Result({
-          player1: player1Data._id,
-          score1,
-          player2: player2Data._id,
-          score2,
-          link,
-        }).save(),
-      ]);
-      bot.sendMessage(
-        id,
-        `result ${player1} ${score1}:${score2} ${player2} is successfully added`
-      );
-    }
-  } else if (!player1Data) {
-    bot.sendMessage(id, `Неверное имя участника ${player1}`);
+  if (!match) {
+    bot.sendMessage(id, `incorrect userName or match doesn't exist`);
+  } else if (match && (match.score1 || match.score2)) {
+    bot.sendMessage(
+      id,
+      `result ${match.player1} ${match.score1}:${match.score2} ${match.player2} is already added `
+    );
+  } else if (score1 === score2) {
+    bot.sendMessage(id, `Некорректный счет матча `);
   } else {
-    bot.sendMessage(id, `Неверное имя участника ${player2}`);
+    let winner = player2;
+    let looser = player1;
+    if (score1 > score2) {
+      winner = player1;
+      looser = player2;
+    }
+    switch (match.stage) {
+      case ROUND1_WINNERS_MATCH1:
+      case ROUND1_WINNERS_MATCH2:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [{ player1: player1 }, { player2: player2 }],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [{ player1: player2 }, { player2: player1 }],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const [newMatchWinner, newMatchLooser] = await Promise.all([
+            Playoff.findOne({ stage: ROUND2_WINNERS_MATCH1 }),
+            Playoff.findOne({ stage: "1/8-L1" }),
+          ]);
+          if (newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND2_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.updateOne({ stage: "1/8-L1" }, { player2: looser }),
+            ]);
+          } else if (!newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.create({ stage: ROUND2_WINNERS_MATCH1, player1: winner }),
+              Playoff.updateOne({ stage: "1/8-L1" }, { player2: looser }),
+            ]);
+          } else if (newMatchWinner && !newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND2_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.create({ stage: "1/8-L1", player1: looser }),
+            ]);
+          } else {
+            Promise.all([
+              Playoff.create({ stage: ROUND2_WINNERS_MATCH1, player1: winner }),
+              Playoff.create({ stage: "1/8-L1", player1: looser }),
+            ]);
+          }
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND1_WINNERS_MATCH3:
+      case ROUND1_WINNERS_MATCH4:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [{ player1: player1 }, { player2: player2 }],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [{ player1: player2 }, { player2: player1 }],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const [newMatchWinner, newMatchLooser] = await Promise.all([
+            Playoff.findOne({ stage: ROUND2_WINNERS_MATCH2 }),
+            Playoff.findOne({ stage: ROUND1_LOSERS_MATCH2 }),
+          ]);
+          if (newMatchWinner && newMatchLooser) {
+            Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND2_WINNERS_MATCH2 },
+                { player2: winner }
+              ),
+              Playoff.updateOne(
+                { stage: ROUND1_LOSERS_MATCH2 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (!newMatchWinner && newMatchLooser) {
+            Promise.all([
+              Playoff.create({ stage: ROUND2_WINNERS_MATCH2, player1: winner }),
+              Playoff.updateOne(
+                { stage: ROUND1_LOSERS_MATCH2 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (newMatchWinner && !newMatchLooser) {
+            Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND2_WINNERS_MATCH2 },
+                { player2: winner }
+              ),
+              Playoff.create({ stage: ROUND1_LOSERS_MATCH2, player1: looser }),
+            ]);
+          } else {
+            Promise.all([
+              Playoff.create({ stage: ROUND2_WINNERS_MATCH2, player1: winner }),
+              Playoff.create({ stage: ROUND1_LOSERS_MATCH2, player1: looser }),
+            ]);
+          }
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND1_LOSERS_MATCH1:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const newMatchWinner = await Playoff.findOne({
+            stage: ROUND2_LOSERS_MATCH1,
+          });
+          if (newMatchWinner) {
+            await Playoff.updateOne(
+              { stage: ROUND2_LOSERS_MATCH1 },
+              { player2: winner }
+            );
+          } else {
+            await Playoff.create({
+              stage: ROUND2_LOSERS_MATCH1,
+              player1: winner,
+            });
+          }
+          await Player.findOneAndUpdate(
+            { name: looser },
+            { $set: { finalPlace: "7-8" } }
+          );
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND1_LOSERS_MATCH2:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const newMatchWinner = await Playoff.findOne({
+            stage: ROUND2_LOSERS_MATCH2,
+          });
+          if (newMatchWinner) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND2_LOSERS_MATCH2 },
+                { player2: winner }
+              ),
+            ]);
+          } else {
+            await Promise.all([
+              Playoff.create({ stage: ROUND2_LOSERS_MATCH2, player1: winner }),
+            ]);
+          }
+          await Player.findOneAndUpdate(
+            { name: looser },
+            { $set: { finalPlace: "7-8" } }
+          );
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND2_WINNERS_MATCH1:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const [newMatchWinner, newMatchLooser] = await Promise.all([
+            Playoff.findOne({ stage: ROUND3_WINNERS_MATCH1 }),
+            Playoff.findOne({ stage: ROUND2_LOSERS_MATCH1 }),
+          ]);
+          if (newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND3_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.updateOne(
+                { stage: ROUND2_LOSERS_MATCH1 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (!newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.create({ stage: ROUND3_WINNERS_MATCH1, player1: winner }),
+              Playoff.updateOne(
+                { stage: ROUND2_LOSERS_MATCH1 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (newMatchWinner && !newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND3_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.create({ stage: ROUND2_LOSERS_MATCH1, player1: looser }),
+            ]);
+          } else {
+            await Promise.all([
+              Playoff.create({ stage: ROUND3_WINNERS_MATCH1, player1: winner }),
+              Playoff.create({ stage: ROUND2_LOSERS_MATCH1, player1: looser }),
+            ]);
+          }
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND2_WINNERS_MATCH2:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const [newMatchWinner, newMatchLooser] = await Promise.all([
+            Playoff.findOne({ stage: ROUND3_WINNERS_MATCH1 }),
+            Playoff.findOne({ stage: ROUND2_LOSERS_MATCH2 }),
+          ]);
+          if (newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND3_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.updateOne(
+                { stage: ROUND2_LOSERS_MATCH2 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (!newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.create({ stage: ROUND3_WINNERS_MATCH1, player1: winner }),
+              Playoff.updateOne(
+                { stage: ROUND2_LOSERS_MATCH2 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (newMatchWinner && !newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND3_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.create({ stage: ROUND2_LOSERS_MATCH2, player1: looser }),
+            ]);
+          } else {
+            await Promise.all([
+              Playoff.create({ stage: ROUND3_WINNERS_MATCH1, player1: winner }),
+              Playoff.create({ stage: ROUND2_LOSERS_MATCH2, player1: looser }),
+            ]);
+          }
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND2_LOSERS_MATCH1:
+      case ROUND2_LOSERS_MATCH2:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const newMatchWinner = await Playoff.findOne({
+            stage: ROUND3_LOSERS_MATCH1,
+          });
+          if (newMatchWinner) {
+            await Playoff.updateOne(
+              { stage: ROUND3_LOSERS_MATCH1 },
+              { player2: winner }
+            );
+          } else {
+            await Playoff.create({
+              stage: ROUND3_LOSERS_MATCH1,
+              player1: winner,
+            });
+          }
+          await Player.findOneAndUpdate(
+            { name: looser },
+            { $set: { finalPlace: "5-6" } }
+          );
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND3_LOSERS_MATCH1:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const newMatchWinner = await Playoff.findOne({
+            stage: ROUND4_LOSERS_MATCH1,
+          });
+          if (newMatchWinner) {
+            await Playoff.updateOne(
+              { stage: ROUND4_LOSERS_MATCH1 },
+              { player2: winner }
+            );
+          } else {
+            await Playoff.create({
+              stage: ROUND4_LOSERS_MATCH1,
+              player1: winner,
+            });
+          }
+          await Player.findOneAndUpdate(
+            { name: looser },
+            { $set: { finalPlace: "4" } }
+          );
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND3_WINNERS_MATCH1:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const [newMatchWinner, newMatchLooser] = await Promise.all([
+            Playoff.findOne({ stage: ROUND4_WINNERS_MATCH1 }),
+            Playoff.findOne({ stage: ROUND4_LOSERS_MATCH1 }),
+          ]);
+          if (newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND4_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.updateOne(
+                { stage: ROUND4_LOSERS_MATCH1 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (!newMatchWinner && newMatchLooser) {
+            await Promise.all([
+              Playoff.create({ stage: ROUND4_WINNERS_MATCH1, player1: winner }),
+              Playoff.updateOne(
+                { stage: ROUND4_LOSERS_MATCH1 },
+                { player2: looser }
+              ),
+            ]);
+          } else if (newMatchWinner && !newMatchLooser) {
+            await Promise.all([
+              Playoff.updateOne(
+                { stage: ROUND4_WINNERS_MATCH1 },
+                { player2: winner }
+              ),
+              Playoff.create({ stage: ROUND4_LOSERS_MATCH1, player1: looser }),
+            ]);
+          } else {
+            await Promise.all([
+              Playoff.create({ stage: ROUND4_WINNERS_MATCH1, player1: winner }),
+              Playoff.create({ stage: ROUND4_LOSERS_MATCH1, player1: looser }),
+            ]);
+          }
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND4_LOSERS_MATCH1:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+          const newMatchWinner = await Playoff.findOne({
+            stage: ROUND4_WINNERS_MATCH1,
+          });
+          if (newMatchWinner) {
+            await Playoff.updateOne(
+              { stage: ROUND4_WINNERS_MATCH1 },
+              { player2: winner }
+            );
+          } else {
+            await Playoff.create({
+              stage: ROUND4_WINNERS_MATCH1,
+              player1: winner,
+            });
+          }
+          await Player.findOneAndUpdate(
+            { name: looser },
+            { $set: { finalPlace: "3" } }
+          );
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added`
+          );
+        }
+        break;
+      case ROUND4_WINNERS_MATCH1:
+        {
+          new Result({
+            player1: player1Data._id,
+            score1,
+            player2: player2Data._id,
+            score2,
+            stage: match.stage,
+            link,
+          }).save();
+          if (player1 === match.player1) {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player1 },
+                  { player2: player2 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1, score2 }
+            );
+          } else {
+            await Playoff.updateOne(
+              {
+                $and: [
+                  { player1: player2 },
+                  { player2: player1 },
+                  { stage: match.stage },
+                ],
+              },
+              { score1: score2, score2: score1 }
+            );
+          }
+
+          await Player.findOneAndUpdate(
+            { name: looser },
+            { $set: { finalPlace: "2" } }
+          );
+          await Player.findOneAndUpdate(
+            { name: winner },
+            { $set: { finalPlace: "1" } }
+          );
+          await Playoff.updateOne(
+            {
+              $and: [
+                { player1: player2 },
+                { player2: player1 },
+                { stage: match.stage },
+              ],
+            },
+            { score1: score2, score2: score1 }
+          );
+          const tournaments = await Tournament.find()
+            .sort({ _id: -1 })
+            .limit(1);
+          const tournament = tournaments[0];
+          tournament.status = TOURNAMENT_STATUS.COMPLETED;
+          await tournament.save();
+          bot.sendMessage(
+            id,
+            `result ${player1} ${score1}:${score2} ${player2} is successfully added Tournament is finished  Поздравляем ${winner}`
+          );
+        }
+        break;
+    }
   }
 }
 bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
@@ -275,7 +1044,7 @@ bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
 });
 async function showGroupStandings(chatId, group) {
   const players = await Player.find({ group });
-  bot.sendMessage(chatId, `group ${group}`);
+  await bot.sendMessage(chatId, `group ${group}`);
   const sortedPlayers = players.sort((b, a) => {
     return a.score - b.score;
   });
@@ -284,18 +1053,11 @@ async function showGroupStandings(chatId, group) {
       return `${index + 1}) ${player.name} ${player.score}pts`;
     })
     .join("\n");
-  setTimeout(
-    () => {
-      bot.sendMessage(chatId, res);
-    },
-    500,
-    chatId,
-    res
-  );
+
+  await bot.sendMessage(chatId, res);
 }
 async function checkStatus(chatId) {
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
-  console.log(tournament);
   switch (tournament[0].status) {
     case TOURNAMENT_STATUS.REGISTRATION:
       bot.sendMessage(chatId, `Идет регистрация Список участников:`);
@@ -304,25 +1066,43 @@ async function checkStatus(chatId) {
       }, 1000);
       break;
     case TOURNAMENT_STATUS.GROUPS:
-      bot.sendMessage(chatId, `Идет Групповая стадия турнира:`);
-      setTimeout(() => {
-        showGroupStandings(chatId, "A");
-      }, 1000);
-      setTimeout(() => {
-        showGroupStandings(chatId, "B");
-      }, 2000);
+      {
+        const numberOfGroups = tournament[0].groupsNumber;
+        const groups = GROUP_NAMES.slice(0, numberOfGroups);
+        bot.sendMessage(chatId, `Идет Групповая стадия турнира:`);
+        for (const group of groups) {
+          await showGroupStandings(chatId, group);
+        }
+      }
       break;
     case TOURNAMENT_STATUS.TIEBREAK:
-      const tiebreak = await Tiebreak.find({});
-      const res = tiebreak
+      {
+        const tiebreak = await Tiebreak.find({});
+        const res = tiebreak
+          .map((match, index) => {
+            return `${index + 1}) ${match.player1} ${match.player1Score}:${
+              match.player2Score
+            } ${match.player2}`;
+          })
+          .join("\n");
+        bot
+          .sendMessage(chatId, "Идут Тайбрейки")
+          .then(() => bot.sendMessage(chatId, res));
+      }
+      break;
+    case TOURNAMENT_STATUS.PLAYOFF:
+      const playoff = await Playoff.find({});
+      const res = playoff
         .map((match, index) => {
-          return `${index + 1}) ${match.player1} ${match.player1Score}:${
-            match.player2Score
-          } ${match.player2}`;
+          return `stage: ${match.stage} ${
+            match.player1 || "Соперник не определен"
+          } ${match.score1 || 0}:${match.score || 0} ${
+            match.player2 || "Соперник не определен"
+          }`;
         })
         .join("\n");
       bot
-        .sendMessage(chatId, "Идут Тайбрейки")
+        .sendMessage(chatId, "Матчи Плей-офф")
         .then(() => bot.sendMessage(chatId, res));
       break;
   }
@@ -395,10 +1175,9 @@ async function showGroupStandingsByPersonalMatches(chatId, group) {
       } personal matches score`;
     })
     .join("\n");
-  bot.sendMessage(chatId, res);
+  await bot.sendMessage(chatId, res);
   const groupByPersonalMatches =
     helper.sameScoreAndPersonalMatchesGroupPlayers(sortedPlayers);
-  console.log(groupByPersonalMatches, "tiegroups");
   let tieBreakPairs = [];
   const dbPairs = [];
   groupByPersonalMatches.forEach((players) => {
@@ -443,23 +1222,63 @@ async function showGroupStandingsByPersonalMatches(chatId, group) {
   } else {
     tournament.status = TOURNAMENT_STATUS.PLAYOFF;
     await tournament.save();
-    bot.sendMessage(chatId, "Групповая стадия успешно завершена");
+    bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ в плейофе");
+    await Promise.all(
+      sortedPlayers.map(async (player, index) => {
+        await Player.findOneAndUpdate(
+          { _id: player._id },
+          { $set: { groupPlace: index + 1 } }
+        );
+      })
+    );
   }
 }
 async function finishGroups(chatId) {
   const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
   const tournament = tournaments[0];
+  const groupsNumber = tournament.groupsNumber;
+  const groups = GROUP_NAMES.slice(0, groupsNumber);
+  console.log(groups, "groups");
   if (!tournament || tournament?.status !== TOURNAMENT_STATUS.GROUPS) {
     bot.sendMessage(chatId, "Групповая стадия не активна");
   } else {
-    const [playersA, playersB] = await Promise.all([
-      Player.find({ group: "A" }),
-      Player.find({ group: "B" }),
-    ]);
-    await countPersonalMatches(helper.sameScoreGroupPlayers(playersA));
-    showGroupStandingsByPersonalMatches(chatId, "A");
-    await countPersonalMatches(helper.sameScoreGroupPlayers(playersB));
-    showGroupStandingsByPersonalMatches(chatId, "B");
+    // const [playersA, playersB, playersC, playersD] = await Promise.all([
+    //   Player.find({ group: "A" }),
+    //   Player.find({ group: "B" }),
+    //   Player.find({ group: "C" }),
+    //   Player.find({ group: "D" }),
+    // ]);
+    // const playersPromises = groups.map(
+    //   async (group, i) => new Promise((res) => Player.find({ group }))
+    // ); // [P1, P2, P3, P4];
+    // const results = await Promise.all(playersPromises);
+    // console.log(results, "res");
+    // results.map(async (promise, index) => {
+    //   await countPersonalMatches(helper.sameScoreGroupPlayers(promise));
+    //   await showGroupStandingsByPersonalMatches(chatId, groups[index]);
+    // });
+    const players = [];
+    for (const group of groups) {
+      const res = await Player.find({ group: group });
+      players.push({
+        group: group,
+        players: res,
+      });
+    }
+    for (const player of players) {
+      await countPersonalMatches(helper.sameScoreGroupPlayers(player.players));
+      await showGroupStandingsByPersonalMatches(chatId, player.group);
+    }
+    // await countPersonalMatches(helper.sameScoreGroupPlayers(playersA));
+    // await showGroupStandingsByPersonalMatches(chatId, "A");
+    // await countPersonalMatches(helper.sameScoreGroupPlayers(playersB));
+    // await showGroupStandingsByPersonalMatches(chatId, "B");
+    // await countPersonalMatches(helper.sameScoreGroupPlayers(playersC));
+    // await showGroupStandingsByPersonalMatches(chatId, "C");
+    // await countPersonalMatches(helper.sameScoreGroupPlayers(playersD));
+    // await showGroupStandingsByPersonalMatches(chatId, "D");
+    await createBracket(chatId, 8);
+    bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ В ПЛЕЙОФЕ");
   }
 }
 bot.onText(/\/finishGroups/, (msg) => {
@@ -536,7 +1355,7 @@ async function addTiebreakResult(id, string) {
       ]);
       bot.sendMessage(
         id,
-        `result ${player1} vs ${player2} is successfully added`
+        `result ${player1} ${score1}:${score2} ${player2} is successfully added`
       );
       if (tiebreakMatch.player1 === player1) {
         tiebreakMatch.player1Score = score1;
@@ -559,16 +1378,23 @@ async function addTiebreakResult(id, string) {
 async function finishTieBreaks(chatId, group) {
   const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
   const tournament = tournaments[0];
+  const groupsNumber = tournament.groupsNumber;
+  const groups = GROUP_NAMES.slice(0, groupsNumber);
   if (!tournament || tournament?.status !== TOURNAMENT_STATUS.TIEBREAK) {
     bot.sendMessage(chatId, "Тайбрейк стадия не активна");
   } else {
-    await showFinalStandings(chatId, "A");
-    await showFinalStandings(chatId, "B");
+    for (const group of groups) {
+      await showFinalStandings(chatId, group);
+    }
+    // await showFinalStandings(chatId, "A");
+    // await showFinalStandings(chatId, "B");
+    // await showFinalStandings(chatId, "C");
+    // await showFinalStandings(chatId, "D");
+    bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ В ПЛЕЙОФЕ");
+    await createBracket(chatId, 8);
 
     tournament.status = TOURNAMENT_STATUS.PLAYOFF;
     await tournament.save();
-
-    bot.sendMessage(chatId, "Групповая стадия успешно завершена ГЛ В ПЛЕЙОФЕ");
   }
 }
 async function showFinalStandings(chatId, group) {
@@ -584,12 +1410,12 @@ async function showFinalStandings(chatId, group) {
           if (!a.randomNumber) {
             a.randomNumber = randomNumbers[i];
 
-            randomResults.push({name: a.name, value: a.randomNumber });
+            randomResults.push({ name: a.name, value: a.randomNumber });
             i++;
           }
           if (!b.randomNumber) {
             b.randomNumber = randomNumbers[i];
-            randomResults.push({name: b.name, value: b.randomNumber });
+            randomResults.push({ name: b.name, value: b.randomNumber });
             i++;
           }
           return a.randomNumber > b.randomNumber ? -1 : 1;
@@ -602,26 +1428,245 @@ async function showFinalStandings(chatId, group) {
       return a.score < b.score ? 1 : -1;
     }
   });
-
-  const firstMessage = randomResult.map(player => (
-    `Random number for ${player.name} is ${random.number}`
-  )).join("\n");
-
-  const secondMessage = sortedPlayers
-    .map((player, index) => (
-      `${index + 1}) ${player.name} ${player.score} pts | ${
-        player.personalMatchesScore
-      } personal matches score | ${player.tiebreakScore} tiebreak score |  ${
-        player.randomNumber ? `${player.randomNumber} random score` : ""
-      }`
-    ))
+  const firstMessage = randomResults
+    .map((player) => `Random number for ${player.name} is ${player.value}`)
     .join("\n");
 
-  bot.sendMessage(chatId, firstMessage).then(() => 
-      bot.sendMessage(chatId, secondMessage)
+  const secondMessage = sortedPlayers
+    .map(
+      (player, index) =>
+        `${index + 1}) ${player.name} ${player.score} pts | ${
+          player.personalMatchesScore
+        } personal matches score | ${player.tiebreakScore} tiebreak score |  ${
+          player.randomNumber ? `${player.randomNumber} random score` : ""
+        }`
+    )
+    .join("\n");
+  await bot.sendMessage(chatId, firstMessage);
+  await bot.sendMessage(chatId, secondMessage);
+  await Promise.all(
+    sortedPlayers.map(async (player, index) => {
+      await Player.findOneAndUpdate(
+        { _id: player._id },
+        { $set: { groupPlace: index + 1 } }
+      );
+    })
   );
 }
+async function createBracket(chatId, playersInBracket) {
+  const tournaments = await Tournament.find().sort({ _id: -1 }).limit(1);
+  const tournament = tournaments[0];
+  const numberOfGroups = tournament.groupsNumber;
+  const groups = GROUP_NAMES.slice(0, numberOfGroups);
+  console.log(numberOfGroups, "num");
+  if (playersInBracket === 8 && numberOfGroups === 2) {
+    const [playersA, playersB] = await Promise.all([
+      Player.find({ group: "A" }),
+      Player.find({ group: "B" }),
+    ]);
+    const numberOfPlayers = playersA.length + playersB.length;
+    const sortedA = playersA.sort((a, b) => {
+      return a.groupPlace - b.groupPlace;
+    });
+    const sortedB = playersB.sort((a, b) => {
+      return a.groupPlace - b.groupPlace;
+    });
+    if (numberOfPlayers !== playersInBracket) {
+      const eliminatedPlayersFromGroup =
+        (numberOfPlayers - playersInBracket) / numberOfGroups;
+      const eliminatedA = sortedA.splice(-eliminatedPlayersFromGroup);
+      const eliminatedB = sortedB.splice(-eliminatedPlayersFromGroup);
+      const eliminatedPlace = playersInBracket + 1;
+      await Promise.all(
+        eliminatedA.map(async (player, index) => {
+          let currentPlace = eliminatedPlace;
+          await Player.findOneAndUpdate(
+            { _id: player._id },
+            { $set: { finalPlace: `${currentPlace}-${currentPlace + 1}` } }
+          );
+          currentPlace += numberOfGroups;
+        })
+      );
+      await Promise.all(
+        eliminatedB.map(async (player, index) => {
+          let currentPlace = eliminatedPlace;
+          await Player.findOneAndUpdate(
+            { _id: player._id },
+            { $set: { finalPlace: `${currentPlace}-${currentPlace + 1}` } }
+          );
+          currentPlace += numberOfGroups;
+        })
+      );
+    }
+    let reversedPartB = sortedB.slice(1, sortedB.length - 1);
+    reversedPartB.push(sortedB[0]);
+    reversedPartB.unshift(sortedB[sortedB.length - 1]);
+    const reversedB = reversedPartB;
+    let reversedPartA = sortedA.slice(1, sortedA.length - 1).reverse();
+    reversedPartA.push(sortedA[sortedA.length - 1]);
+    reversedPartA.unshift(sortedA[0]);
+    const reversedA = reversedPartA;
+    const playoffPairs = reversedA.map((player, index) => {
+      return {
+        score1: "0",
+        score2: "0",
+        stage: `W-1-${index + 1}`,
+        player1: player.name,
+        player2: `${reversedB[index].name}`,
+      };
+    });
+    await Playoff.insertMany(playoffPairs);
+  } else if (playersInBracket === 8 && numberOfGroups === 4) {
+    const allPlayers = await Player.find({});
+    const numberOfPlayers = allPlayers.length;
+    const playoffPlayers = [];
+    for (const group of groups) {
+      const groupData = await Player.find({ group });
+      const sortedData = groupData.sort((a, b) => {
+        return a.groupPlace - b.groupPlace;
+      });
+      if (numberOfPlayers !== playersInBracket) {
+        const eliminatedPlayersFromGroup =
+          (numberOfPlayers - playersInBracket) / numberOfGroups;
+        const eliminatedPlayers = sortedData.splice(
+          -eliminatedPlayersFromGroup
+        );
+        const eliminatedPlace = playersInBracket + 1;
+        await Promise.all(
+          eliminatedPlayers.map(async (player, index) => {
+            let currentPlace = eliminatedPlace;
+            await Player.findOneAndUpdate(
+              { _id: player._id },
+              {
+                $set: {
+                  finalPlace: `${currentPlace}-${
+                    currentPlace + numberOfGroups - 1
+                  }`,
+                },
+              }
+            );
+            currentPlace += numberOfGroups;
+          })
+        );
+        playoffPlayers.push(...sortedData);
+      }
+    }
 
+    // const [playersA, playersB, playersC, playersD] = await Promise.all([
+    //   Player.find({ group: "A" }),
+    //   Player.find({ group: "B" }),
+    //   Player.find({ group: "C" }),
+    //   Player.find({ group: "D" }),
+    // ]);
+    // const sortedA = playersA.sort((a, b) => {
+    //   return a.groupPlace - b.groupPlace;
+    // });
+    // const sortedB = playersB.sort((a, b) => {
+    //   return a.groupPlace - b.groupPlace;
+    // });
+    // const sortedC = playersC.sort((a, b) => {
+    //   return a.groupPlace - b.groupPlace;
+    // });
+    // const sortedD = playersD.sort((a, b) => {
+    //   return a.groupPlace - b.groupPlace;
+    // });
+    // if (numberOfPlayers !== playersInBracket) {
+    //   const eliminatedPlayersFromGroup =
+    //     (numberOfPlayers - playersInBracket) / numberOfGroups;
+    //   const eliminatedA = sortedA.splice(-eliminatedPlayersFromGroup);
+    //   const eliminatedB = sortedB.splice(-eliminatedPlayersFromGroup);
+    //   const eliminatedC = sortedC.splice(-eliminatedPlayersFromGroup);
+    //   const eliminatedD = sortedD.splice(-eliminatedPlayersFromGroup);
+    //   const eliminatedPlace = playersInBracket + 1;
+    //   await Promise.all(
+    //     eliminatedA.map(async (player, index) => {
+    //       let currentPlace = eliminatedPlace;
+    //       await Player.findOneAndUpdate(
+    //         { _id: player._id },
+    //         {
+    //           $set: {
+    //             finalPlace: `${currentPlace}-${
+    //               currentPlace + numberOfGroups - 1
+    //             }`,
+    //           },
+    //         }
+    //       );
+    //       currentPlace += numberOfGroups;
+    //     })
+    //   );
+    //   await Promise.all(
+    //     eliminatedB.map(async (player, index) => {
+    //       let currentPlace = eliminatedPlace;
+    //       await Player.findOneAndUpdate(
+    //         { _id: player._id },
+    //         {
+    //           $set: {
+    //             finalPlace: `${currentPlace}-${
+    //               currentPlace + numberOfGroups - 1
+    //             }`,
+    //           },
+    //         }
+    //       );
+    //       currentPlace += numberOfGroups;
+    //     })
+    //   );
+    //   await Promise.all(
+    //     eliminatedC.map(async (player, index) => {
+    //       let currentPlace = eliminatedPlace;
+    //       await Player.findOneAndUpdate(
+    //         { _id: player._id },
+    //         {
+    //           $set: {
+    //             finalPlace: `${currentPlace}-${
+    //               currentPlace + numberOfGroups - 1
+    //             }`,
+    //           },
+    //         }
+    //       );
+    //       currentPlace += numberOfGroups;
+    //     })
+    //   );
+    //   await Promise.all(
+    //     eliminatedD.map(async (player, index) => {
+    //       let currentPlace = eliminatedPlace;
+    //       await Player.findOneAndUpdate(
+    //         { _id: player._id },
+    //         {
+    //           $set: {
+    //             finalPlace: `${currentPlace}-${
+    //               currentPlace + numberOfGroups - 1
+    //             }`,
+    //           },
+    //         }
+    //       );
+    //       currentPlace += numberOfGroups;
+    //     })
+    //   );
+    // }
+    // const playoffPlayers = [];
+    // playoffPlayers.push(...sortedA, ...sortedB, ...sortedC, ...sortedD);
+    console.log(playoffPlayers, "plfplrs");
+    const secondPlacePlayers = [];
+    const firstPlacePlayers = playoffPlayers.filter((player) => {
+      if (player.groupPlace === 2) {
+        secondPlacePlayers.push(player);
+      } else {
+        return true;
+      }
+    });
+    const secondPlacePlayersReversed = secondPlacePlayers.reverse();
+    const playoffPairs = firstPlacePlayers.map((player, index) => {
+      return {
+        score1: "0",
+        score2: "0",
+        stage: `W-1-${index + 1}`,
+        player1: player.name,
+        player2: `${secondPlacePlayersReversed[index].name}`,
+      };
+    });
+    await Playoff.insertMany(playoffPairs);
+  }
+}
 bot.onText(/\/finishTiebreak/, (msg) => {
   const { id } = msg.chat;
   finishTieBreaks(id, "A");

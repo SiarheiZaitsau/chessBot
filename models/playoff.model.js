@@ -1,8 +1,9 @@
 const mongoose = require("mongoose");
+require("./player.model");
 
 const Schema = mongoose.Schema;
 
-const TOURNAMENT_STATUS = {
+const PLAYOFF_STATUS = {
   ROUND1_WINNERS_MATCH1: "W-1-1",
   ROUND1_WINNERS_MATCH2: "W-1-2",
   ROUND1_WINNERS_MATCH3: "W-1-3",
@@ -19,40 +20,31 @@ const TOURNAMENT_STATUS = {
   ROUND4_WINNERS_MATCH1: "W-4-1",
 };
 
-const PlayerSchema = new Schema({
-  name: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-  group: {
+const PlayoffSchema = new Schema({
+  player1: {
     type: String,
     default: "",
   },
-  score: {
+  score1: {
     type: Number,
     default: 0,
   },
-  personalMatchesScore: {
-    type: Number,
-    default: 0,
-  },
-  tiebreakScore: {
-    type: Number,
-    default: 0,
-  },
-  groupPlace: {
-    type: Number,
-    default: 0,
-  },
-  finalPlace: {
+  player2: {
     type: String,
     default: "",
+  },
+  score2: {
+    type: Number,
+    default: 0,
+  },
+  stage: {
+    type: String,
   },
 });
 
-const Player = mongoose.model("players", PlayerSchema);
+const Playoff = mongoose.model("playoff", PlayoffSchema);
 
 module.exports = {
-  Player,
+  Playoff,
+  PLAYOFF_STATUS,
 };

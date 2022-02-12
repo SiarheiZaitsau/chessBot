@@ -52,6 +52,15 @@ module.exports = {
     groupByScore(group, function (player) {
       return [player.score, player.personalMatchesScore, player.tiebreakScore];
     }),
+  splitArrayIntoChunksOfLen: (arr, len) => {
+    const chunks = [];
+    i = 0;
+    n = arr.length;
+    while (i < n) {
+      chunks.push(arr.slice(i, (i += len)));
+    }
+    return chunks;
+  },
 };
 
 function groupByScore(players, f) {
