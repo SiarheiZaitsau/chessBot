@@ -84,16 +84,8 @@ async function registerPlayer(chatId, query) {
             console.log(e);
             bot.sendMessage(chatId, `User is already exist`);
           })
-          .then(
-            setTimeout(() => {
-              bot.sendMessage(chatId, `Список участников:`);
-            }, 500)
-          )
-          .then(
-            setTimeout(() => {
-              sendPlayers(chatId);
-            }, 1000)
-          );
+          .then(() => bot.sendMessage(chatId, `Список участников:`))
+          .then(() => sendPlayers(chatId));
       })
       .catch(function (error) {
         bot.sendMessage(chatId, `Incorrect username`);
@@ -108,18 +100,17 @@ bot.onText(/\/register (.+)/, (msg, [source, value]) => {
 });
 
 async function sendPlayers(chatId, query) {
-  Player.find(query).then((players) => {
-    const res = players
-      .map((player, index) => {
-        return `${index + 1} ${player.name}`;
-      })
-      .join("\n");
-    if (players.length > 0) {
-      bot.sendMessage(chatId, res);
-    } else {
-      bot.sendMessage(chatId, "На данный момент список участников пуст");
-    }
-  });
+  const players = await Player.find(query);
+  const res = players
+    .map((player, index) => {
+      return `${index + 1} ${player.name}`;
+    })
+    .join("\n");
+  if (players.length > 0) {
+    await bot.sendMessage(chatId, res);
+  } else {
+    bot.sendMessage(chatId, "На данный момент список участников пуст");
+  }
 }
 
 bot.onText(/\/players/, (msg, [source, match]) => {
@@ -159,9 +150,9 @@ async function addGroups(numberOfGroups) {
   );
 }
 
-function sendGroup(chatId, group) {
-  bot.sendMessage(chatId, `Group ${group}`);
-  sendPlayers(chatId, { group });
+async function sendGroup(chatId, group) {
+  await bot.sendMessage(chatId, `Group ${group}`);
+  await sendPlayers(chatId, { group });
 }
 
 async function startTournament(chatId, numberOfGroups) {
@@ -179,30 +170,12 @@ async function startTournament(chatId, numberOfGroups) {
   } else {
     tournament.status = TOURNAMENT_STATUS.GROUPS;
     tournament.groupsNumber = numberOfGroups;
-    await tournament
-      .save()
-      .then(await addGroups(numberOfGroups))
-      .then(bot.sendMessage(chatId, `tournament has been successfully started`))
-      .then(
-        setTimeout(() => {
-          sendGroup(chatId, "A");
-        }, 500)
-      )
-      .then(
-        setTimeout(() => {
-          sendGroup(chatId, "B");
-        }, 5000)
-      )
-      .then(
-        setTimeout(() => {
-          sendGroup(chatId, "C");
-        }, 10000)
-      )
-      .then(
-        setTimeout(() => {
-          sendGroup(chatId, "D");
-        }, 15000)
-      );
+    await tournament.save().then(await addGroups(numberOfGroups));
+    await sendGroup(chatId, "A");
+    await sendGroup(chatId, "B");
+    await sendGroup(chatId, "C");
+    await sendGroup(chatId, "D");
+    bot.sendMessage(chatId, `tournament has been successfully started`);
   }
 }
 bot.onText(/\/start/, (msg) => {
@@ -1060,10 +1033,8 @@ async function checkStatus(chatId) {
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
   switch (tournament[0].status) {
     case TOURNAMENT_STATUS.REGISTRATION:
-      bot.sendMessage(chatId, `Идет регистрация Список участников:`);
-      setTimeout(() => {
-        sendPlayers(chatId);
-      }, 1000);
+      await bot.sendMessage(chatId, `Идет регистрация Список участников:`);
+      sendPlayers(chatId);
       break;
     case TOURNAMENT_STATUS.GROUPS:
       {
