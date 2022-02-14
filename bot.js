@@ -14,9 +14,16 @@ require("./models/tournament.model");
 require("./models/tiebreak.model");
 require("./models/playoff.model");
 
-const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A";
+
+// TODO: составить список всех функций которые у тебя есть и разбить их на группы по смыслу(это нужно для того что бы мы потом это разбили по файлам) 
+
+
+// TODO: https://stackoverflow.com/questions/12467102/how-to-get-the-latest-and-oldest-record-in-mongoose-js-or-just-the-timespan-bet/54741405
+// tournamet[0], match[0] заменить все вот это на нормальный findOne по ссылке выше
+
+const token = "5075310188:AAFJJAPibPicZEzZl9M--T7ULy8kfQ6tI8A"; // TODO: config
 const MONGODB_URI =
-  "mongodb+srv://oslan228:papech364@telegram.nnwcf.mongodb.net/telegram?retryWrites=true&w=majority";
+  "mongodb+srv://oslan228:papech364@telegram.nnwcf.mongodb.net/telegram?retryWrites=true&w=majority"; // TODO: config
 
 const bot = new TelegramBot(token, {
   polling: {
@@ -26,7 +33,9 @@ const bot = new TelegramBot(token, {
       timeout: 10,
     },
   },
-});
+}// TODO: config TGBotParams
+);
+
 mongoose
   .connect(MONGODB_URI)
   .then(() => console.log("connected"))
@@ -35,25 +44,23 @@ mongoose
 async function announceTournament(id) {
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
   if (!tournament[0] || tournament[0]?.status !== TOURNAMENT_STATUS.REGISTRATION) {
-    new Tournament({
+    await new Tournament({
       status: TOURNAMENT_STATUS.REGISTRATION,
-    })
-      .save()
-      .then((response) => {
-        bot.sendMessage(id, "Tournament is successfully started, registration is open");
-      });
+    }).save();
+    bot.sendMessage(id, "Tournament is successfully started, registration is open");
   } else {
     bot.sendMessage(id, "Tournament is already active");
   }
 }
+
 bot.onText(/\/announce/, (msg, [source, match]) => {
   const { id } = msg.chat;
   announceTournament(id);
-});
+}); // TODO: move all onText to the bottom
 
 async function registerPlayer(chatId, query) {
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
-  console.log(tournament, "tournament");
+
   if (tournament[0].status !== TOURNAMENT_STATUS.REGISTRATION) {
     bot.sendMessage(chatId, `Sorry registration is closed`);
   } else {
@@ -64,7 +71,7 @@ async function registerPlayer(chatId, query) {
           name: query.name.toLowerCase(),
         })
           .save()
-          .then((response) =>
+          .then(() =>
             bot.sendMessage(chatId, `user ${query.name} is successfully registered`)
           )
           .catch((e) => {
@@ -80,11 +87,12 @@ async function registerPlayer(chatId, query) {
       });
   }
 }
+
 bot.onText(/\/register (.+)/, (msg, [source, value]) => {
   const { id } = msg.chat;
   const name = value.match(/[^\/]+$/)[0].trim();
   registerPlayer(id, { name });
-});
+}); // TODO: bottom
 
 async function sendPlayers(chatId, query) {
   const players = await Player.find(query);
@@ -103,22 +111,21 @@ async function sendPlayers(chatId, query) {
 bot.onText(/\/players/, (msg, [source, match]) => {
   const { id } = msg.chat;
   helper.sendPlayers(id, {});
-});
+}); // TODO: bottom
 
-async function addGroups(numberOfGroups) {
+async function addGroups(numberOfGroups) { // TODO: rename to assignGroups
   const players = await Player.find({});
   const shuffledPlayers = helper.shuffle(players);
   const numberOfPlayers = shuffledPlayers.length;
   const numberOfPlayersInGroup = numberOfPlayers / numberOfGroups;
-  // const idsA = [];
-  // const idsB = [];
   const playersInGroup = helper.splitArrayIntoChunksOfLen(shuffledPlayers, numberOfPlayersInGroup);
-  const groupsIds = playersInGroup.map((players, index) => {
+  const groupsIds = playersInGroup.map((players) => {
     const ids = players.map((player) => {
       return player._id;
     });
     return ids;
   });
+  
   await Promise.all(
     groupsIds.map(async (ids, index) => {
       console.log(ids, "ids");
@@ -137,7 +144,7 @@ async function addGroups(numberOfGroups) {
 async function sendGroup(chatId, group) {
   await bot.sendMessage(chatId, `Group ${group}`);
   await sendPlayers(chatId, { group });
-}
+} // TODO: bottom
 
 async function startTournament(chatId, numberOfGroups) {
   const [tournaments, participants] = await Promise.all([
@@ -146,7 +153,6 @@ async function startTournament(chatId, numberOfGroups) {
   ]);
 
   const tournament = tournaments[0];
-  console.log(tournament, "tournament");
   if (!tournament || tournament?.status !== TOURNAMENT_STATUS.REGISTRATION) {
     bot.sendMessage(chatId, `tournament is already started or not announced`);
   } else if (participants.length < 4 || participants.length % 2 > 0) {
@@ -155,6 +161,8 @@ async function startTournament(chatId, numberOfGroups) {
     tournament.status = TOURNAMENT_STATUS.GROUPS;
     tournament.groupsNumber = numberOfGroups;
     await tournament.save().then(await addGroups(numberOfGroups));
+
+    // TODO: GROUPS hardcoded, simplify code
     await sendGroup(chatId, "A");
     await sendGroup(chatId, "B");
     await sendGroup(chatId, "C");
@@ -162,15 +170,15 @@ async function startTournament(chatId, numberOfGroups) {
     bot.sendMessage(chatId, `tournament has been successfully started`);
   }
 }
+
 bot.onText(/\/start/, (msg) => {
   const { id } = msg.chat;
   startTournament(id, 4);
-});
+}); // TODO: bottom
 
 async function addResult(id, string) {
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
   const stage = tournament[0].status;
-  // const { player1, player2, score1, ...} = functionName(string)
   const splitted = string.replace(/ +(?= )/g, "").split(" ");
   const player1 = splitted[0].toLowerCase();
   const splittedScore = splitted[1].split(":");
@@ -178,15 +186,20 @@ async function addResult(id, string) {
   const score2 = parseFloat(splittedScore[1].replace(",", "."));
   const link = splitted[3] || undefined;
   const player2 = splitted[2].toLowerCase();
-  if (stage === TOURNAMENT_STATUS.GROUPS) {
+
+  if (stage === TOURNAMENT_STATUS.GROUPS) {// TODO: switch/case
+
+    // TODO: move code above to Function addGroupResult
     if ((score1 + score2) % 1 > 0) {
       bot.sendMessage(id, "incorrect score entry");
       throw new Error("Incorrect score");
     }
+
     const [player1Data, player2Data] = await Promise.all([
       Player.findOne({ name: player1 }),
       Player.findOne({ name: player2 }),
     ]);
+  
     if (player1Data && player2Data) {
       const match = await Result.findOne({
         $and: [
@@ -199,6 +212,7 @@ async function addResult(id, string) {
           { stage: stage },
         ],
       });
+      
       if (player1Data.group !== player2Data.group && stage === TOURNAMENT_STATUS.GROUPS) {
         bot.sendMessage(id, `players are in different groups`);
       } else if (match) {
@@ -229,15 +243,20 @@ async function addResult(id, string) {
       }
     } else if (!player1Data) {
       bot.sendMessage(id, `Неверное имя участника ${player1}`);
-    } else {
+    } else if (!player2Data) {
       bot.sendMessage(id, `Неверное имя участника ${player2}`);
+    } else {
+      bot.sendMessage(id, `Ошибка. Результат матча не был добавлен`);
     }
   } else if (stage === TOURNAMENT_STATUS.PLAYOFF) {
     addPlayoffResult(player1, player2, score1, score2, link, id);
-  }
+  } 
+
+  // TODO: addTieBreakResult
 }
+
 async function addPlayoffResult(player1, player2, score1, score2, link, id) {
-  const lastMatch = await Playoff.find({
+  const lastMatch = await Playoff.findOne({
     $and: [
       {
         $or: [{ player1: player1 }, { player2: player1 }],
@@ -249,12 +268,14 @@ async function addPlayoffResult(player1, player2, score1, score2, link, id) {
   })
     .sort({ _id: -1 })
     .limit(1);
-  const match = lastMatch[0];
-  console.log(match, "match");
+
+  const match = lastMatch[0]; 
+
   const [player1Data, player2Data] = await Promise.all([
     Player.findOne({ name: player1 }),
     Player.findOne({ name: player2 }),
   ]);
+
   if (!match) {
     bot.sendMessage(id, `incorrect userName or match doesn't exist`);
   } else if (match && (match.score1 || match.score2)) {
@@ -267,10 +288,12 @@ async function addPlayoffResult(player1, player2, score1, score2, link, id) {
   } else {
     let winner = player2;
     let looser = player1;
+
     if (score1 > score2) {
       winner = player1;
       looser = player2;
     }
+
     switch (match.stage) {
       case ROUND1_WINNERS_MATCH1:
       case ROUND1_WINNERS_MATCH2:
@@ -298,9 +321,12 @@ async function addPlayoffResult(player1, player2, score1, score2, link, id) {
               { score1: score2, score2: score1 }
             );
           }
+
+          //TODO: 297- 319 можно вынести и переиспользовать
+
           const [newMatchWinner, newMatchLooser] = await Promise.all([
             Playoff.findOne({ stage: ROUND2_WINNERS_MATCH1 }),
-            Playoff.findOne({ stage: "1/8-L1" }),
+            Playoff.findOne({ stage: "1/8-L1" }), // TODO: constants
           ]);
           if (newMatchWinner && newMatchLooser) {
             await Promise.all([
@@ -815,11 +841,13 @@ async function addPlayoffResult(player1, player2, score1, score2, link, id) {
         break;
     }
   }
-}
+} 
+
 bot.onText(/\/addResult (.+)/, (msg, [source, match]) => {
   const { id } = msg.chat;
   addResult(id, match.trim());
-});
+}); // TODO: bottom
+
 async function showGroupStandings(chatId, group) {
   const players = await Player.find({ group });
   await bot.sendMessage(chatId, `group ${group}`);
@@ -834,7 +862,8 @@ async function showGroupStandings(chatId, group) {
 
   await bot.sendMessage(chatId, res);
 }
-async function checkStatus(chatId) {
+
+async function checkStatus(chatId) { // rename showTournamentStatus
   const tournament = await Tournament.find().sort({ _id: -1 }).limit(1);
   switch (tournament[0].status) {
     case TOURNAMENT_STATUS.REGISTRATION:
@@ -867,7 +896,7 @@ async function checkStatus(chatId) {
     case TOURNAMENT_STATUS.PLAYOFF:
       const playoff = await Playoff.find({});
       const res = playoff
-        .map((match, index) => {
+        .map((match) => {
           return `stage: ${match.stage} ${match.player1 || "Соперник не определен"} ${
             match.score1 || 0
           }:${match.score || 0} ${match.player2 || "Соперник не определен"}`;
@@ -877,10 +906,11 @@ async function checkStatus(chatId) {
       break;
   }
 }
+
 bot.onText(/\/status/, (msg) => {
   const { id } = msg.chat;
   checkStatus(id);
-});
+}); //TODO: bottom
 
 async function countPersonalMatches(groupPlayers) {
   for (group of groupPlayers) {
