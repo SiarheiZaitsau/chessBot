@@ -177,10 +177,21 @@ async function addResult(id, string) {
     bot.sendMessage(id, "incorrect score entry");
     throw new Error("Incorrect score");
   }
-  await Player.updateOne({ name: player1 }, { $inc: { score: score1 } });
-  await Player.updateOne(
+  await Player.findOneAndUpdate(
+    { name: player1 },
+    { $inc: { score: score1 } },
+    (err, doc) => {
+      if (err) console.log("Something wrong when updating data!");
+      console.log(doc);
+  }
+  );
+  await Player.findOneAndUpdate(
     { name: player2 }, //
-    { $inc: { score: score2 } }
+    { $inc: { score: score2 } },
+    (err, doc) => {
+    if (err) console.log("Something wrong when updating data!");
+    console.log(doc);
+}
   );
   bot.sendMessage(id, `result ${string} is sucesfully added`);
 }

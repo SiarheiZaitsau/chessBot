@@ -287,23 +287,29 @@ function addResult(id, string) {
 
         case 15:
           _context4.next = 17;
-          return regeneratorRuntime.awrap(Player.updateOne({
+          return regeneratorRuntime.awrap(Player.findOneAndUpdate({
             name: player1
           }, {
             $inc: {
               score: score1
             }
+          }, function (err, doc) {
+            if (err) console.log("Something wrong when updating data!");
+            console.log(doc);
           }));
 
         case 17:
           _context4.next = 19;
-          return regeneratorRuntime.awrap(Player.updateOne({
+          return regeneratorRuntime.awrap(Player.findOneAndUpdate({
             name: player2
           }, //
           {
             $inc: {
               score: score2
             }
+          }, function (err, doc) {
+            if (err) console.log("Something wrong when updating data!");
+            console.log(doc);
           }));
 
         case 19:
